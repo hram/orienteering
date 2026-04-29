@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ page_title or "Новая тренировка" }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell narrow">
+      <header class="topbar">
+        <div>
+          <h1>{{ page_title or "Новая тренировка" }}</h1>
+          <p>Шаг 1 из 3: основные данные.</p>
+        </div>
+      </header>
+
+      <form class="panel form-stack" method="post" action="{{ form_action or '/trainings/imports' }}">
+        <label>
+          Название
+          <input name="title" required placeholder="Лесная тренировка, спринт, старт" value="{{ draft.title or '' }}">
+        </label>
+
+        <label>
+          Дата
+          <input name="date" type="date" required value="{{ draft.date or '' }}">
+        </label>
+
+        <label>
+          Тип
+          <select name="training_type">
+            <option value="training" {% if (draft.training_type or 'training') == 'training' %}selected{% endif %}>Тренировка</option>
+            <option value="race" {% if draft.training_type == 'race' %}selected{% endif %}>Старт</option>
+            <option value="control" {% if draft.training_type == 'control' %}selected{% endif %}>Контрольная</option>
+          </select>
+        </label>
+
+        <label>
+          Место
+          <input name="location" placeholder="Парк, лес, город" value="{{ draft.location or '' }}">
+        </label>
+
+        <label>
+          Заметки
+          <textarea name="notes" rows="4" placeholder="Цель тренировки, самочувствие, комментарий тренера">{{ draft.notes or '' }}</textarea>
+        </label>
+
+        <div class="actions">
+          <a class="button" href="/trainings">Отмена</a>
+          <button class="button primary" type="submit">{{ submit_label or "Дальше" }}</button>
+        </div>
+      </form>
+    </main>
+  </body>
+</html>

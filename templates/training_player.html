@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ training.title }} · Player</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  </head>
+  <body>
+    <main class="shell wide">
+      <header class="topbar">
+        <div>
+          <h1>{{ training.title }}</h1>
+          <p>{{ training.date }}{% if training.location %} · {{ training.location }}{% endif %}</p>
+        </div>
+        <a class="button" href="/trainings">К тренировкам</a>
+      </header>
+
+      <section
+        id="player-workspace"
+        class="player-workspace"
+        data-training-id="{{ training.training_id }}"
+        data-transform='{{ training.georef_transform | tojson }}'
+        data-course-controls='{{ training.course_controls | tojson }}'
+        data-track-points='{{ training.track_points | tojson }}'
+      >
+        <div class="panel player-panel">
+          <div class="player-controls">
+            <button id="player-toggle" class="button primary" type="button" aria-label="Start">▶</button>
+            <label class="sr-only" for="player-speed">Скорость</label>
+            <select id="player-speed" aria-label="Скорость проигрывания">
+                <option value="1">1x</option>
+                <option value="2">2x</option>
+                <option value="5" selected>5x</option>
+                <option value="10">10x</option>
+                <option value="20">20x</option>
+            </select>
+            <input id="player-position" type="range" min="0" max="1000" value="0">
+            <span id="player-time" class="muted">00:00</span>
+          </div>
+
+          <div class="track-image-stage player-stage">
+            <div id="player-image-viewport" class="track-image-viewport">
+              <div id="player-image-content" class="track-image-content">
+                {% if training.map_image_url %}
+                  <img id="player-map-image" src="{{ training.map_image_url }}" alt="Карта маршрута">
+                  <svg id="player-svg" class="track-image-svg"></svg>
+                {% else %}
+                  <div class="empty-stage">Нет картинки маршрута</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="pace-chart-panel">
+            <div class="pane-header">
+              <h2>Темп</h2>
+              <div class="pace-header-actions">
+                <span id="pace-value" class="muted">--:-- мин/км</span>
+                <button id="trim-left" class="button compact" type="button">Обрезать слева</button>
+                <button id="trim-right" class="button compact" type="button">Обрезать справа</button>
+                <button id="trim-undo" class="button compact" type="button" disabled>Undo</button>
+                <button id="save-track" class="button compact primary" type="button" disabled>Сохранить трек</button>
+                <span id="track-save-status" class="muted"></span>
+              </div>
+            </div>
+            <div class="pace-chart-frame">
+              <canvas id="pace-chart" class="pace-chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/player.js"></script>
+  </body>
+</html>

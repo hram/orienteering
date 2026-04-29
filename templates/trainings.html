@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Тренировки</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Тренировки</h1>
+          <p>Журнал стартов, тренировок и разборов.</p>
+        </div>
+        <a class="button primary" href="/trainings/new">Добавить</a>
+      </header>
+
+      <section class="panel">
+        {% if trainings %}
+          <div class="training-list">
+            {% for training in trainings %}
+              <article class="training-row">
+                <div>
+                  <strong>{{ training.title }}</strong>
+                  <span>
+                    {{ training.date }}
+                    {% if training.training_type %} · {{ training.training_type }}{% endif %}
+                    {% if training.location %} · {{ training.location }}{% endif %}
+                  </span>
+                </div>
+                <div class="training-actions">
+                  <a class="edit-button" href="/trainings/{{ training.training_id }}/edit" aria-label="Редактировать {{ training.title }}" title="Редактировать">✎</a>
+                  <a class="play-button" href="/trainings/{{ training.training_id }}/play" aria-label="Play {{ training.title }}" title="Play">
+                    <span aria-hidden="true"></span>
+                  </a>
+                </div>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="muted">Пока нет добавленных тренировок.</p>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Трек прохождения</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell wide">
+      <header class="topbar">
+        <div>
+          <h1>Трек прохождения</h1>
+          <p>Шаг 3 из 4: загрузите GPX и проверьте прохождение на карте.</p>
+        </div>
+        <a class="button" href="/trainings/imports/{{ draft.draft_id }}/map">Назад к карте</a>
+      </header>
+
+      <section class="panel import-summary">
+        <div>
+          <strong>{{ draft.title }}</strong>
+          <span>{{ draft.date }}</span>
+        </div>
+        {% if draft.track_gpx_filename %}
+          <span>{{ draft.track_gpx_filename }}</span>
+        {% endif %}
+      </section>
+
+      <section class="panel form-stack">
+        <form id="track-upload-form" class="upload-row">
+          <input name="file" type="file" accept=".gpx,application/gpx+xml,text/xml" required>
+          <button class="button" type="submit">Загрузить GPX</button>
+        </form>
+        <form class="actions" method="post" action="/trainings/imports/{{ draft.draft_id }}/finish">
+          <button class="button primary" type="submit">Завершить импорт</button>
+        </form>
+      </section>
+
+      <section
+        id="track-workspace"
+        class="track-workspace"
+        data-draft-id="{{ draft.draft_id }}"
+        data-image-url="{{ draft.map_image_url or '' }}"
+        data-transform='{{ draft.georef_transform | tojson }}'
+        data-course-controls='{{ draft.course_controls | tojson }}'
+        data-track-points='{{ draft.track_points | tojson }}'
+      >
+        <div class="map-pane panel">
+          <div class="pane-header">
+            <h2>Карта маршрута</h2>
+            <span id="track-status" class="muted">Загрузите GPX</span>
+          </div>
+          <div class="track-image-stage">
+            <div id="track-image-viewport" class="track-image-viewport">
+              <div id="track-image-content" class="track-image-content">
+                {% if draft.map_image_url %}
+                  <img id="track-map-image" src="{{ draft.map_image_url }}" alt="Карта тренировки">
+                  <svg id="track-image-svg" class="track-image-svg"></svg>
+                {% else %}
+                  <div class="empty-stage">Нет картинки карты</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/track.js"></script>
+  </body>
+</html>

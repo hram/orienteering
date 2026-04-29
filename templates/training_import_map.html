@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Привязка карты</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell wide">
+      <header class="topbar">
+        <div>
+          <h1>Привязка карты</h1>
+          <p>Шаг 2 из 4: совместите картинку карты с реальными координатами.</p>
+        </div>
+        <a class="button" href="/trainings">К тренировкам</a>
+      </header>
+
+      <section class="panel import-summary">
+        <div>
+          <strong>{{ draft.title }}</strong>
+          <span>{{ draft.date }}</span>
+        </div>
+        {% if draft.location %}
+          <span>{{ draft.location }}</span>
+        {% endif %}
+      </section>
+
+      <section class="panel form-stack">
+        <form id="map-upload-form" class="upload-row">
+          <input name="file" type="file" accept="image/png,image/jpeg,image/webp" required>
+          <button class="button" type="submit">Загрузить карту</button>
+        </form>
+      </section>
+
+      <section
+        id="georef-workspace"
+        class="georef-workspace"
+        data-draft-id="{{ draft.draft_id }}"
+        data-image-url="{{ draft.map_image_url or '' }}"
+        data-existing-points='{{ draft.georef_control_points | tojson }}'
+        data-existing-transform='{{ draft.georef_transform | tojson }}'
+        data-existing-course-controls='{{ draft.course_controls | tojson }}'
+      >
+        <div class="map-pane panel">
+          <div class="pane-header">
+            <h2>Картинка карты</h2>
+            <span id="image-point-label" class="muted">Кликните по ориентиру</span>
+          </div>
+          <div class="image-stage">
+            <div id="image-viewport" class="image-viewport">
+              <div id="image-content" class="image-content">
+                {% if draft.map_image_url %}
+                  <img id="map-image" src="{{ draft.map_image_url }}" alt="Карта тренировки">
+                {% else %}
+                  <div class="empty-stage">Загрузите картинку карты</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="map-pane panel">
+          <div class="pane-header">
+            <h2>Базовая карта</h2>
+            <span id="geo-point-label" class="muted">Затем кликните ту же точку здесь</span>
+          </div>
+          <div id="base-map" class="base-map"></div>
+        </div>
+
+        <aside class="panel point-sidebar">
+          <div class="mode-tabs" role="tablist" aria-label="Режим работы">
+            <button class="mode-tab active" type="button" data-mode="georef">Привязка</button>
+            <button class="mode-tab" type="button" data-mode="course">КП</button>
+          </div>
+
+          <div class="mode-panel active" data-panel="georef">
+            <h2>Контрольные точки</h2>
+            <ol id="control-point-list" class="point-list"></ol>
+            <div id="georef-result" class="georef-result muted">Нужно минимум 3 точки.</div>
+          </div>
+
+          <div class="mode-panel" data-panel="course">
+            <h2>Маршрут</h2>
+            <ol id="course-control-list" class="point-list"></ol>
+            <div id="course-result" class="georef-result muted">Сначала сохраните привязку карты.</div>
+          </div>
+
+          <label class="opacity-control">
+            Прозрачность наложения
+            <input id="overlay-opacity" type="range" min="0" max="100" value="55">
+          </label>
+
+          <div class="actions mode-actions active" data-actions="georef">
+            <button id="undo-point" class="button" type="button">Убрать последнюю</button>
+            <button id="save-georef" class="button primary" type="button">Сохранить привязку</button>
+          </div>
+          <div class="actions mode-actions" data-actions="course">
+            <button id="undo-course-control" class="button" type="button">Убрать последний КП</button>
+            <button id="save-course-controls" class="button primary" type="button">Сохранить маршрут</button>
+          </div>
+          <div class="wizard-next">
+            <a class="button primary" href="/trainings/imports/{{ draft.draft_id }}/track">К загрузке трека</a>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/static/georef.js"></script>
+  </body>
+</html>
