@@ -26,6 +26,8 @@
   const splitAnalysisSvg = document.querySelector("#split-analysis-svg");
   const splitAnalysisClose = document.querySelector("#split-analysis-close");
   const splitDebugSnapshotButton = document.querySelector("#split-debug-snapshot");
+  const splitPaceChart = document.querySelector("#split-pace-chart");
+  const splitPaceStatus = document.querySelector("#split-pace-status");
   const splitChatMessages = document.querySelector("#split-chat-messages");
   const splitChatStart = document.querySelector("#split-chat-start");
   const splitChatStartButton = document.querySelector("#split-chat-start-button");
@@ -50,6 +52,7 @@
   let lastFrameTime = null;
   let athleteMarker = null;
   let paceChartInstance = null;
+  let splitPaceChartInstance = null;
   let paceScrubPointerId = null;
   let trimHistory = [];
   let trackDirty = false;
@@ -500,17 +503,21 @@
   }
 
   function calculatePaceSeries() {
+    return calculateTrackPaceSeries(trackPoints, trackPoints[0]?.seconds || 0);
+  }
+
+  function calculateTrackPaceSeries(points, baseSeconds) {
     const raw = [];
-    for (let index = 1; index < trackPoints.length; index += 1) {
-      const previous = trackPoints[index - 1];
-      const current = trackPoints[index];
+    for (let index = 1; index < points.length; index += 1) {
+      const previous = points[index - 1];
+      const current = points[index];
       const seconds = current.seconds - previous.seconds;
       const meters = haversineMeters(previous, current);
       if (seconds <= 0 || meters < 0.5) {
         continue;
       }
       raw.push({
-        seconds: current.seconds - trackPoints[0].seconds,
+        seconds: current.seconds - baseSeconds,
         pace: seconds / 60 / (meters / 1000),
       });
     }
@@ -775,6 +782,7 @@
     activeSplitAnalysisRow = row;
     resetSplitChat(row);
     renderSplitAnalysisMap(row);
+    drawSplitPaceChart(row);
     splitAnalysisModal.hidden = false;
     document.body.classList.add("modal-open");
     splitChatStartButton?.focus();
@@ -787,6 +795,7 @@
     splitAnalysisModal.hidden = true;
     document.body.classList.remove("modal-open");
     activeSplitAnalysisRow = null;
+    destroySplitPaceChart();
   }
 
   function resetSplitChat(row) {
@@ -1034,6 +1043,109 @@
     coursePoints.forEach((control, index) => {
       addAnalysisControlMarker(control, index === 0 ? "from" : index === coursePoints.length - 1 ? "to" : "via");
     });
+  }
+
+  function drawSplitPaceChart(row) {
+    destroySplitPaceChart();
+    if (!splitPaceChart || !splitPaceStatus) {
+      return;
+    }
+    const trackSegment = trackPoints.slice(row.fromTrackIndex, row.toTrackIndex + 1);
+    const baseSeconds = trackSegment[0]?.seconds || 0;
+    const series = calculateTrackPaceSeries(trackSegment, baseSeconds);
+    const duration = Math.max(row.splitSeconds || 0, 1);
+    if (series.length < 2) {
+      splitPaceStatus.textContent = "нет данных";
+      return;
+    }
+    const average = series.reduce((sum, point) => sum + point.pace, 0) / series.length;
+    splitPaceStatus.textContent = `${formatPace(average)} мин/км`;
+    if (!window.Chart) {
+      splitPaceStatus.textContent = "график недоступен";
+      return;
+    }
+    const paceBounds = calculatePaceBoundsForSeries(series);
+    splitPaceChartInstance = new window.Chart(splitPaceChart, {
+      type: "line",
+      data: {
+        datasets: [{
+          label: "Темп",
+          data: series.map((point) => ({x: point.seconds, y: point.pace})),
+          borderColor(context) {
+            return createPaceGradient(context.chart, 1);
+          },
+          backgroundColor(context) {
+            return createPaceGradient(context.chart, 0.22);
+          },
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHitRadius: 8,
+          tension: 0.25,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        parsing: false,
+        plugins: {
+          legend: {
+            display: false,
+          },
+          tooltip: {
+            enabled: false,
+          },
+        },
+        scales: {
+          x: {
+            type: "linear",
+            min: 0,
+            max: duration,
+            grid: {
+              color: "rgba(102, 116, 124, 0.14)",
+            },
+            ticks: {
+              maxTicksLimit: 6,
+              callback(value) {
+                return formatTime(Number(value));
+              },
+            },
+          },
+          y: {
+            min: paceBounds.min,
+            max: paceBounds.max,
+            grid: {
+              color: "rgba(102, 116, 124, 0.14)",
+            },
+            ticks: {
+              maxTicksLimit: 4,
+              callback(value) {
+                return formatPace(Number(value));
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  function destroySplitPaceChart() {
+    if (splitPaceChartInstance) {
+      splitPaceChartInstance.destroy();
+      splitPaceChartInstance = null;
+    }
+  }
+
+  function calculatePaceBoundsForSeries(series) {
+    const values = series.map((point) => point.pace);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    if (min === max) {
+      return {min: min - 0.5, max: max + 0.5};
+    }
+    const padding = Math.max((max - min) * 0.12, 0.3);
+    return {min: Math.max(0, min - padding), max: max + padding};
   }
 
   function appendSplitArrowMarker() {
