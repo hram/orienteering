@@ -25,6 +25,7 @@
   const splitAnalysisTitle = document.querySelector("#split-analysis-title");
   const splitAnalysisSvg = document.querySelector("#split-analysis-svg");
   const splitAnalysisClose = document.querySelector("#split-analysis-close");
+  const splitDebugSnapshotButton = document.querySelector("#split-debug-snapshot");
   const splitChatMessages = document.querySelector("#split-chat-messages");
   const splitChatStart = document.querySelector("#split-chat-start");
   const splitChatStartButton = document.querySelector("#split-chat-start-button");
@@ -166,6 +167,9 @@
   });
 
   splitAnalysisClose?.addEventListener("click", closeSplitAnalysis);
+  splitDebugSnapshotButton?.addEventListener("click", () => {
+    openSplitDebugSnapshot();
+  });
   splitAnalysisModal?.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.matches("[data-close-split-analysis]")) {
       closeSplitAnalysis();
@@ -936,6 +940,45 @@
     }
   }
 
+  async function openSplitDebugSnapshot() {
+    if (!activeSplitAnalysisRow || !splitDebugSnapshotButton) {
+      return;
+    }
+    const originalText = splitDebugSnapshotButton.textContent;
+    splitDebugSnapshotButton.disabled = true;
+    splitDebugSnapshotButton.textContent = "Готовлю...";
+    try {
+      const dataUrl = await splitAnalysisSnapshotDataUrl();
+      if (!dataUrl) {
+        throw new Error("Снимок сплита пустой");
+      }
+      const snapshotWindow = window.open();
+      if (!snapshotWindow) {
+        throw new Error("Браузер заблокировал открытие окна");
+      }
+      snapshotWindow.document.write(`<!doctype html>
+        <html lang="ru">
+          <head>
+            <meta charset="utf-8">
+            <title>PNG для AI · Сплит ${activeSplitAnalysisRow.label}</title>
+            <style>
+              body { margin: 0; background: #162024; display: grid; min-height: 100vh; place-items: center; }
+              img { max-width: 100vw; max-height: 100vh; object-fit: contain; background: #eef3f5; }
+            </style>
+          </head>
+          <body>
+            <img src="${dataUrl}" alt="PNG для AI">
+          </body>
+        </html>`);
+      snapshotWindow.document.close();
+    } catch (error) {
+      appendSplitChatMessage("assistant", `Не удалось подготовить PNG для AI: ${error.message}`);
+    } finally {
+      splitDebugSnapshotButton.disabled = false;
+      splitDebugSnapshotButton.textContent = originalText;
+    }
+  }
+
   async function imageElementDataUrl(sourceImage) {
     const response = await fetch(sourceImage.currentSrc || sourceImage.src);
     const blob = await response.blob();
@@ -1005,6 +1048,7 @@
     marker.setAttribute("orient", "auto-start-reverse");
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+    path.setAttribute("fill", "#b21f5b");
     marker.appendChild(path);
     defs.appendChild(marker);
     splitAnalysisSvg.appendChild(defs);
@@ -1014,6 +1058,17 @@
     const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
     polyline.setAttribute("class", className);
     polyline.setAttribute("points", points.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "));
+    polyline.setAttribute("fill", "none");
+    polyline.setAttribute("stroke-linecap", "round");
+    polyline.setAttribute("stroke-linejoin", "round");
+    if (className === "split-course-line") {
+      polyline.setAttribute("stroke", "#b21f5b");
+      polyline.setAttribute("stroke-width", "5");
+      polyline.setAttribute("marker-end", "url(#split-arrow-head)");
+    } else {
+      polyline.setAttribute("stroke", "#1565c0");
+      polyline.setAttribute("stroke-width", "6");
+    }
     splitAnalysisSvg.appendChild(polyline);
   }
 
@@ -1025,9 +1080,17 @@
     circle.setAttribute("cx", String(point.pixel_x));
     circle.setAttribute("cy", String(point.pixel_y));
     circle.setAttribute("r", role === "via" ? "8" : "10");
+    circle.setAttribute("fill", role === "via" ? "#0f6b4f" : "#b21f5b");
+    circle.setAttribute("stroke", "#ffffff");
+    circle.setAttribute("stroke-width", "3");
     const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
     label.setAttribute("x", String(point.pixel_x));
     label.setAttribute("y", String(point.pixel_y + 4));
+    label.setAttribute("fill", "#ffffff");
+    label.setAttribute("font-family", "Inter, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif");
+    label.setAttribute("font-size", "12");
+    label.setAttribute("font-weight", "700");
+    label.setAttribute("text-anchor", "middle");
     label.textContent = control.label;
     group.append(circle, label);
     splitAnalysisSvg.appendChild(group);

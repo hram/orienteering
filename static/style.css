@@ -611,6 +611,12 @@ textarea {
   font-size: 18px;
 }
 
+.split-analysis-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .split-analysis-close {
   display: inline-grid;
   width: 32px;
