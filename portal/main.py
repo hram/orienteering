@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from portal.db import init_db, normalize_db_path
 from portal.infrastructure import config
-from portal.routers import georef, imports
+from portal.routers import ai, georef, imports
 
 
 load_dotenv()
@@ -39,6 +39,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(georef.router, prefix="/api")
+app.include_router(ai.router, prefix="/api")
 app.include_router(imports.router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/uploads", StaticFiles(directory=str(Path(config.UPLOAD_DIR).expanduser())), name="uploads")

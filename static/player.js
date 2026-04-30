@@ -21,14 +21,25 @@
   const trackSaveStatus = document.querySelector("#track-save-status");
   const splitsStatus = document.querySelector("#splits-status");
   const splitsTableBody = document.querySelector("#splits-table-body");
+  const splitAnalysisModal = document.querySelector("#split-analysis-modal");
+  const splitAnalysisTitle = document.querySelector("#split-analysis-title");
+  const splitAnalysisSvg = document.querySelector("#split-analysis-svg");
+  const splitAnalysisClose = document.querySelector("#split-analysis-close");
+  const splitChatMessages = document.querySelector("#split-chat-messages");
+  const splitChatStart = document.querySelector("#split-chat-start");
+  const splitChatStartButton = document.querySelector("#split-chat-start-button");
+  const splitChatForm = document.querySelector("#split-chat-form");
+  const splitChatInput = document.querySelector("#split-chat-input");
+  const splitChatSubmit = document.querySelector("#split-chat-submit");
 
   const trainingId = workspace.dataset.trainingId;
   const transform = parseJson(workspace.dataset.transform, null);
-  const courseControls = normalizeCourseControls(parseJson(workspace.dataset.courseControls, []));
+  const splitsEngine = window.OrienteeringSplits;
+  const courseControls = splitsEngine.normalizeCourseControls(parseJson(workspace.dataset.courseControls, []));
   let trackPoints = parseJson(workspace.dataset.trackPoints, []).map((point, index) => ({
     ...point,
     pixel: transform ? geoToPixel(point) : {pixel_x: 0, pixel_y: 0},
-    seconds: parsePointSeconds(point, index),
+    seconds: splitsEngine.parsePointSeconds(point, index),
   }));
 
   let view = {scale: 1, translateX: 0, translateY: 0};
@@ -41,6 +52,8 @@
   let paceScrubPointerId = null;
   let trimHistory = [];
   let trackDirty = false;
+  let activeSplitAnalysisRow = null;
+  let splitChatHistory = [];
 
   let durationSeconds = calculateDurationSeconds();
   let paceSeries = calculatePaceSeries();
@@ -150,6 +163,25 @@
 
   saveTrackButton?.addEventListener("click", () => {
     saveTrack();
+  });
+
+  splitAnalysisClose?.addEventListener("click", closeSplitAnalysis);
+  splitAnalysisModal?.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.matches("[data-close-split-analysis]")) {
+      closeSplitAnalysis();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && splitAnalysisModal && !splitAnalysisModal.hidden) {
+      closeSplitAnalysis();
+    }
+  });
+  splitChatForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    sendSplitChatMessage();
+  });
+  splitChatStartButton?.addEventListener("click", () => {
+    startSplitChat();
   });
 
   drawStaticLayers();
@@ -709,6 +741,9 @@
     button.type = "button";
     button.setAttribute("aria-label", `Анализ сплита ${row.label}`);
     button.title = "Анализ сплита";
+    button.addEventListener("click", () => {
+      openSplitAnalysis(row);
+    });
     button.appendChild(createSplitAnalysisIcon());
     td.appendChild(button);
     return td;
@@ -726,67 +761,320 @@
     return svgIcon;
   }
 
-  function calculateSplits() {
-    if (!courseControls.length || !trackPoints.length) {
-      return [];
+  function openSplitAnalysis(row) {
+    if (!splitAnalysisModal || !splitAnalysisSvg || !image || !image.naturalWidth || !image.naturalHeight) {
+      return;
     }
-
-    const splitControls = courseControls.filter((control) => control.kind !== "start-point");
-    const startControl = splitControls[0];
-    const startMatch = startControl ? findClosestTrackPoint(startControl, 0) : null;
-    if (!startMatch) {
-      return [];
+    if (splitAnalysisTitle) {
+      splitAnalysisTitle.textContent = `Сплит ${row.label}`;
     }
+    activeSplitAnalysisRow = row;
+    resetSplitChat(row);
+    renderSplitAnalysisMap(row);
+    splitAnalysisModal.hidden = false;
+    document.body.classList.add("modal-open");
+    splitChatStartButton?.focus();
+  }
 
-    const rows = [];
-    const startSeconds = startMatch.seconds;
-    let nextSearchIndex = startMatch.index + 1;
-    let previousAbsoluteSeconds = 0;
-    let previousControl = startControl;
-
-    for (const control of splitControls.slice(1)) {
-      const match = findClosestTrackPoint(control, nextSearchIndex);
-      if (!match) {
-        break;
-      }
-
-      const absoluteSeconds = Math.max(match.seconds - startSeconds, 0);
-      rows.push({
-        label: control.label || String(control.index),
-        absoluteSeconds,
-        splitSeconds: Math.max(absoluteSeconds - previousAbsoluteSeconds, 0),
-        distanceMeters: courseStageDistanceMeters(previousControl, control),
-        paceSecondsPerMeter: null,
-      });
-
-      previousAbsoluteSeconds = absoluteSeconds;
-      previousControl = control;
-      nextSearchIndex = match.index + 1;
+  function closeSplitAnalysis() {
+    if (!splitAnalysisModal) {
+      return;
     }
+    splitAnalysisModal.hidden = true;
+    document.body.classList.remove("modal-open");
+    activeSplitAnalysisRow = null;
+  }
 
-    for (const row of rows) {
-      if (row.splitSeconds !== null && row.distanceMeters && row.distanceMeters > 0) {
-        row.paceSecondsPerMeter = row.splitSeconds / row.distanceMeters;
-      }
+  function resetSplitChat(row) {
+    splitChatHistory = [];
+    if (!splitChatMessages) {
+      return;
     }
-
-    const rankedRows = rows
-      .filter((row) => typeof row.paceSecondsPerMeter === "number")
-      .sort((a, b) => b.paceSecondsPerMeter - a.paceSecondsPerMeter)
-      .slice(0, 3);
-    const slowestRows = new Set(rankedRows);
-    const fastestRows = new Set(
-      rows
-        .filter((row) => typeof row.paceSecondsPerMeter === "number")
-        .sort((a, b) => a.paceSecondsPerMeter - b.paceSecondsPerMeter)
-        .slice(0, 3)
+    splitChatMessages.innerHTML = "";
+    appendSplitChatMessage(
+      "assistant",
+      `Я тренер. Нажми «Начать диалог», и я разберу сплит ${row.label}.`
     );
-    for (const row of rows) {
-      row.isSlowest = slowestRows.has(row);
-      row.isFastest = fastestRows.has(row);
-    }
+    setSplitChatStarted(false);
+  }
 
-    return rows;
+  function startSplitChat() {
+    sendSplitChatMessage("Разбери этот сплит по карте: что получилось хорошо, где могла быть потеря времени, и что попробовать в следующий раз.");
+  }
+
+  async function sendSplitChatMessage(forcedQuestion = null) {
+    if (!activeSplitAnalysisRow || !splitChatInput || !splitChatMessages) {
+      return;
+    }
+    const question = forcedQuestion || splitChatInput.value.trim();
+    if (!question) {
+      return;
+    }
+    if (!forcedQuestion) {
+      splitChatInput.value = "";
+      appendSplitChatMessage("user", question);
+    }
+    splitChatHistory.push({role: "user", content: question});
+    const pending = appendSplitChatMessage("assistant", "Думаю...");
+    setSplitChatStarted(true);
+    setSplitChatPending(true);
+
+    try {
+      const response = await fetch("/api/split-analysis/chat", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          training_id: trainingId,
+          split: splitAnalysisPayload(activeSplitAnalysisRow),
+          messages: splitChatHistory.slice(0, -1),
+          question,
+          image_data_url: await splitAnalysisSnapshotDataUrl(),
+        }),
+      });
+      const payload = await response.json();
+      const answer = payload.answer || "Не получилось сформулировать ответ.";
+      renderAssistantMessage(pending, answer);
+      splitChatHistory.push({role: "assistant", content: answer});
+    } catch (error) {
+      pending.textContent = `Не удалось связаться с тренером: ${error.message}`;
+    } finally {
+      setSplitChatPending(false);
+      splitChatInput.focus();
+    }
+  }
+
+  function setSplitChatPending(isPending) {
+    if (splitChatInput) {
+      splitChatInput.disabled = isPending;
+    }
+    if (splitChatSubmit) {
+      splitChatSubmit.disabled = isPending;
+    }
+    if (splitChatStartButton) {
+      splitChatStartButton.disabled = isPending;
+    }
+  }
+
+  function setSplitChatStarted(isStarted) {
+    if (splitChatStart) {
+      splitChatStart.hidden = isStarted;
+    }
+    if (splitChatForm) {
+      splitChatForm.hidden = !isStarted;
+    }
+  }
+
+  function appendSplitChatMessage(role, text) {
+    const message = document.createElement("div");
+    message.className = `split-chat-message split-chat-message-${role}`;
+    if (role === "assistant") {
+      renderAssistantMessage(message, text);
+    } else {
+      message.textContent = text;
+    }
+    splitChatMessages.appendChild(message);
+    splitChatMessages.scrollTop = splitChatMessages.scrollHeight;
+    return message;
+  }
+
+  function renderAssistantMessage(element, text) {
+    element.textContent = "";
+    const parts = String(text).split(/(\*\*[^*]+\*\*)/g);
+    for (const part of parts) {
+      if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+        const strong = document.createElement("strong");
+        strong.textContent = part.slice(2, -2);
+        element.appendChild(strong);
+      } else {
+        element.appendChild(document.createTextNode(part));
+      }
+    }
+  }
+
+  function splitAnalysisPayload(row) {
+    const trackSegment = trackPoints.slice(row.fromTrackIndex, row.toTrackIndex + 1);
+    return {
+      label: row.label,
+      from: row.fromControl.label,
+      via: row.viaControls.map((control) => control.label),
+      to: row.toControl.label,
+      absolute_seconds: Math.round(row.absoluteSeconds),
+      split_seconds: row.splitSeconds === null ? null : Math.round(row.splitSeconds),
+      course_distance_meters: row.distanceMeters === null ? null : Math.round(row.distanceMeters),
+      pace_seconds_per_meter: row.paceSecondsPerMeter,
+      track_points_count: trackSegment.length,
+      track_start_index: row.fromTrackIndex,
+      track_end_index: row.toTrackIndex,
+    };
+  }
+
+  async function splitAnalysisSnapshotDataUrl() {
+    if (!splitAnalysisSvg || !image) {
+      return null;
+    }
+    const clonedSvg = splitAnalysisSvg.cloneNode(true);
+    clonedSvg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    const mapImage = clonedSvg.querySelector("image");
+    if (mapImage) {
+      mapImage.setAttribute("href", await imageElementDataUrl(image));
+    }
+    const source = new XMLSerializer().serializeToString(clonedSvg);
+    const svgBlob = new Blob([source], {type: "image/svg+xml;charset=utf-8"});
+    const svgUrl = URL.createObjectURL(svgBlob);
+    try {
+      const rendered = await loadImage(svgUrl);
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 820;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#eef3f5";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(rendered, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/png");
+    } finally {
+      URL.revokeObjectURL(svgUrl);
+    }
+  }
+
+  async function imageElementDataUrl(sourceImage) {
+    const response = await fetch(sourceImage.currentSrc || sourceImage.src);
+    const blob = await response.blob();
+    return await blobToDataUrl(blob);
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => reject(new Error("Не удалось подготовить картинку сплита"));
+      nextImage.src = src;
+    });
+  }
+
+  function renderSplitAnalysisMap(row) {
+    const coursePoints = [row.fromControl, ...row.viaControls, row.toControl];
+    const trackSegment = trackPoints.slice(row.fromTrackIndex, row.toTrackIndex + 1);
+    const focusPoints = [
+      ...coursePoints.map(controlPixel),
+      ...trackSegment.map((point) => point.pixel),
+    ];
+    const viewBox = splitViewBox(focusPoints, image.naturalWidth, image.naturalHeight);
+
+    splitAnalysisSvg.innerHTML = "";
+    splitAnalysisSvg.setAttribute("viewBox", viewBox.join(" "));
+
+    const mapImage = document.createElementNS("http://www.w3.org/2000/svg", "image");
+    mapImage.setAttribute("href", image.currentSrc || image.src);
+    mapImage.setAttribute("x", "0");
+    mapImage.setAttribute("y", "0");
+    mapImage.setAttribute("width", String(image.naturalWidth));
+    mapImage.setAttribute("height", String(image.naturalHeight));
+    mapImage.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    splitAnalysisSvg.appendChild(mapImage);
+
+    appendSplitArrowMarker();
+    if (trackSegment.length >= 2) {
+      addAnalysisPolyline(trackSegment.map((point) => point.pixel), "split-track-line");
+    }
+    if (coursePoints.length >= 2) {
+      addAnalysisPolyline(coursePoints.map(controlPixel), "split-course-line");
+    }
+    coursePoints.forEach((control, index) => {
+      addAnalysisControlMarker(control, index === 0 ? "from" : index === coursePoints.length - 1 ? "to" : "via");
+    });
+  }
+
+  function appendSplitArrowMarker() {
+    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+    marker.setAttribute("id", "split-arrow-head");
+    marker.setAttribute("viewBox", "0 0 10 10");
+    marker.setAttribute("refX", "9");
+    marker.setAttribute("refY", "5");
+    marker.setAttribute("markerWidth", "5");
+    marker.setAttribute("markerHeight", "5");
+    marker.setAttribute("orient", "auto-start-reverse");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+    marker.appendChild(path);
+    defs.appendChild(marker);
+    splitAnalysisSvg.appendChild(defs);
+  }
+
+  function addAnalysisPolyline(points, className) {
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("class", className);
+    polyline.setAttribute("points", points.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "));
+    splitAnalysisSvg.appendChild(polyline);
+  }
+
+  function addAnalysisControlMarker(control, role) {
+    const point = controlPixel(control);
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", `split-control-marker split-control-${role}`);
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", String(point.pixel_x));
+    circle.setAttribute("cy", String(point.pixel_y));
+    circle.setAttribute("r", role === "via" ? "8" : "10");
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", String(point.pixel_x));
+    label.setAttribute("y", String(point.pixel_y + 4));
+    label.textContent = control.label;
+    group.append(circle, label);
+    splitAnalysisSvg.appendChild(group);
+  }
+
+  function controlPixel(control) {
+    return {pixel_x: control.pixel_x, pixel_y: control.pixel_y};
+  }
+
+  function splitViewBox(points, imageWidth, imageHeight) {
+    if (!points.length) {
+      return [0, 0, imageWidth, imageHeight];
+    }
+    let minX = Math.min(...points.map((point) => point.pixel_x));
+    let maxX = Math.max(...points.map((point) => point.pixel_x));
+    let minY = Math.min(...points.map((point) => point.pixel_y));
+    let maxY = Math.max(...points.map((point) => point.pixel_y));
+    const minSize = 180;
+    if (maxX - minX < minSize) {
+      const center = (minX + maxX) / 2;
+      minX = center - minSize / 2;
+      maxX = center + minSize / 2;
+    }
+    if (maxY - minY < minSize) {
+      const center = (minY + maxY) / 2;
+      minY = center - minSize / 2;
+      maxY = center + minSize / 2;
+    }
+    const padding = Math.max(maxX - minX, maxY - minY) * 0.18;
+    minX = clamp(minX - padding, 0, imageWidth);
+    minY = clamp(minY - padding, 0, imageHeight);
+    maxX = clamp(maxX + padding, 0, imageWidth);
+    maxY = clamp(maxY + padding, 0, imageHeight);
+    return [minX, minY, Math.max(maxX - minX, minSize), Math.max(maxY - minY, minSize)];
+  }
+
+  function calculateSplits() {
+    return splitsEngine.calculateSplits(courseControls, trackPoints);
+  }
+
+  function courseControlsBetween(previousControl, currentControl) {
+    const previousIndex = previousControl.index - 1;
+    const currentIndex = currentControl.index - 1;
+    if (currentIndex - previousIndex <= 1) {
+      return [];
+    }
+    return courseControls.slice(previousIndex + 1, currentIndex);
   }
 
   function findClosestTrackPoint(control, startIndex) {

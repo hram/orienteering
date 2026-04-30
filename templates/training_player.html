@@ -98,6 +98,34 @@
       </section>
     </main>
 
+    <div id="split-analysis-modal" class="split-analysis-modal" hidden>
+      <div class="split-analysis-backdrop" data-close-split-analysis></div>
+      <section class="split-analysis-dialog" role="dialog" aria-modal="true" aria-labelledby="split-analysis-title">
+        <header class="split-analysis-header">
+          <h2 id="split-analysis-title">Сплит</h2>
+          <button id="split-analysis-close" class="split-analysis-close" type="button" aria-label="Закрыть">
+            <span aria-hidden="true">×</span>
+          </button>
+        </header>
+        <div class="split-analysis-body">
+          <div class="split-analysis-map">
+            <svg id="split-analysis-svg" class="split-analysis-svg" role="img" aria-label="Карта сплита"></svg>
+          </div>
+          <aside class="split-coach-chat" aria-label="Чат с тренером">
+            <div id="split-chat-messages" class="split-chat-messages"></div>
+            <div id="split-chat-start" class="split-chat-start">
+              <button id="split-chat-start-button" class="button primary" type="button">Начать диалог</button>
+            </div>
+            <form id="split-chat-form" class="split-chat-form" hidden>
+              <input id="split-chat-input" type="text" autocomplete="off" placeholder="Спроси тренера про этот сплит">
+              <button id="split-chat-submit" class="button primary compact" type="submit">Отправить</button>
+            </form>
+          </aside>
+        </div>
+      </section>
+    </div>
+
+    <script src="/static/splits.js"></script>
     <script src="/static/player.js"></script>
   </body>
 </html>
