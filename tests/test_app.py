@@ -72,6 +72,7 @@ def test_import_track_page_renders() -> None:
 
     assert response.status_code == 200
     assert "Загрузить GPX" in response.text
+    assert "splits-table-body" not in response.text
 
 
 def test_finish_training_import_redirects_to_trainings() -> None:
@@ -141,6 +142,8 @@ def test_training_player_page_renders_after_import_finish() -> None:
     assert response.status_code == 200
     assert "player-workspace" in response.text
     assert "player.js" in response.text
+    assert "splits-table-body" in response.text
+    assert "Сек/метр" in response.text
 
 
 def test_training_edit_wizard_prefills_existing_training() -> None:

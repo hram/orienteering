@@ -8,11 +8,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
   </head>
   <body>
-    <main class="shell wide">
-      <header class="topbar">
+    <main class="shell wide player-shell">
+      <header class="topbar player-topbar">
         <div>
           <h1>{{ training.title }}</h1>
-          <p>{{ training.date }}{% if training.location %} · {{ training.location }}{% endif %}</p>
         </div>
         <a class="button" href="/trainings">К тренировкам</a>
       </header>
@@ -70,6 +69,31 @@
             </div>
           </div>
         </div>
+
+        <aside class="panel splits-pane">
+          <div class="pane-header">
+            <h2>Сплиты</h2>
+            <span id="splits-status" class="muted">Авторасчет по ближайшим КП</span>
+          </div>
+          <div class="splits-table-wrap">
+            <table class="splits-table">
+              <thead>
+                <tr>
+                  <th>Точка</th>
+                  <th>Время</th>
+                  <th>Сплит</th>
+                  <th>Дистанция</th>
+                  <th>Сек/метр</th>
+                </tr>
+              </thead>
+              <tbody id="splits-table-body">
+                <tr class="splits-empty-row">
+                  <td colspan="5">Загрузите трек, чтобы увидеть сплиты.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </aside>
       </section>
     </main>
 

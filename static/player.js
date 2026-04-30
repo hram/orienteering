@@ -19,6 +19,8 @@
   const trimUndoButton = document.querySelector("#trim-undo");
   const saveTrackButton = document.querySelector("#save-track");
   const trackSaveStatus = document.querySelector("#track-save-status");
+  const splitsStatus = document.querySelector("#splits-status");
+  const splitsTableBody = document.querySelector("#splits-table-body");
 
   const trainingId = workspace.dataset.trainingId;
   const transform = parseJson(workspace.dataset.transform, null);
@@ -152,6 +154,7 @@
 
   drawStaticLayers();
   drawPaceChart();
+  renderSplitsTable();
   updateAthlete();
   updateTrimButtons();
 
@@ -215,6 +218,7 @@
     timeLabel.textContent = `${formatTime(playheadSeconds)} / ${formatTime(durationSeconds)}`;
     updatePaceCursor();
     updateTrimButtons();
+    renderSplitsTable();
   }
 
   function seekToSeconds(seconds) {
@@ -234,6 +238,7 @@
     drawPaceChart();
     updateAthlete();
     updateTrimButtons();
+    renderSplitsTable();
   }
 
   function interpolateTrackPixel(seconds) {
@@ -612,6 +617,7 @@
     trimHistory = [];
     trackDirty = false;
     updateTrimButtons();
+    renderSplitsTable();
     if (trackSaveStatus) {
       trackSaveStatus.textContent = "Сохранено";
     }
@@ -630,6 +636,207 @@
       ...point,
       pixel: point.pixel ? {...point.pixel} : {pixel_x: 0, pixel_y: 0},
     };
+  }
+
+  function renderSplitsTable() {
+    if (!splitsTableBody) {
+      return;
+    }
+
+    splitsTableBody.innerHTML = "";
+
+    if (!trackPoints.length) {
+      appendEmptySplitsRow("Загрузите трек, чтобы увидеть сплиты.");
+      if (splitsStatus) {
+        splitsStatus.textContent = "Авторасчет по ближайшим КП";
+      }
+      return;
+    }
+
+    const splits = calculateSplits();
+    if (!splits.length) {
+      appendEmptySplitsRow("Недостаточно данных для расчета сплитов.");
+      if (splitsStatus) {
+        splitsStatus.textContent = "Сплиты не рассчитаны";
+      }
+      return;
+    }
+
+    for (const row of splits) {
+      const tr = document.createElement("tr");
+      if (row.isSlowest) {
+        tr.classList.add("split-fastest");
+      } else if (row.isFastest) {
+        tr.classList.add("split-fast");
+      }
+      tr.append(
+        appendCell(row.label),
+        appendCell(formatDuration(row.absoluteSeconds)),
+        appendCell(row.splitSeconds === null ? "—" : formatDuration(row.splitSeconds)),
+        appendCell(formatDistance(row.distanceMeters)),
+        appendCell(formatPacePerMeter(row.paceSecondsPerMeter))
+      );
+      splitsTableBody.appendChild(tr);
+    }
+
+    if (splitsStatus) {
+      splitsStatus.textContent = `Рассчитано КП: ${splits.length}.`;
+    }
+  }
+
+  function appendEmptySplitsRow(message) {
+    const tr = document.createElement("tr");
+    tr.className = "splits-empty-row";
+    const td = document.createElement("td");
+    td.colSpan = 4;
+    td.textContent = message;
+    tr.appendChild(td);
+    splitsTableBody.appendChild(tr);
+  }
+
+  function appendCell(text) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    return td;
+  }
+
+  function calculateSplits() {
+    if (!courseControls.length || !trackPoints.length) {
+      return [];
+    }
+
+    const splitControls = courseControls.filter((control) => control.kind !== "start-point");
+    const startControl = splitControls[0];
+    const startMatch = startControl ? findClosestTrackPoint(startControl, 0) : null;
+    if (!startMatch) {
+      return [];
+    }
+
+    const rows = [];
+    const startSeconds = startMatch.seconds;
+    let nextSearchIndex = startMatch.index + 1;
+    let previousAbsoluteSeconds = 0;
+
+    rows.push({
+      label: startControl.label || String(startControl.index),
+      absoluteSeconds: 0,
+      splitSeconds: null,
+      distanceMeters: null,
+      paceSecondsPerMeter: null,
+    });
+
+    for (const control of splitControls.slice(1)) {
+      const match = findClosestTrackPoint(control, nextSearchIndex);
+      if (!match) {
+        break;
+      }
+
+      const absoluteSeconds = Math.max(match.seconds - startSeconds, 0);
+      rows.push({
+        label: control.label || String(control.index),
+        absoluteSeconds,
+        splitSeconds: Math.max(absoluteSeconds - previousAbsoluteSeconds, 0),
+        distanceMeters: courseStageDistanceMeters(splitControls[rows.length - 1], control),
+        paceSecondsPerMeter: null,
+      });
+
+      previousAbsoluteSeconds = absoluteSeconds;
+      nextSearchIndex = match.index + 1;
+    }
+
+    for (const row of rows) {
+      if (row.splitSeconds !== null && row.distanceMeters && row.distanceMeters > 0) {
+        row.paceSecondsPerMeter = row.splitSeconds / row.distanceMeters;
+      }
+    }
+
+    const rankedRows = rows
+      .filter((row) => typeof row.paceSecondsPerMeter === "number")
+      .sort((a, b) => b.paceSecondsPerMeter - a.paceSecondsPerMeter)
+      .slice(0, 3);
+    const slowestRows = new Set(rankedRows);
+    const fastestRows = new Set(
+      rows
+        .filter((row) => typeof row.paceSecondsPerMeter === "number")
+        .sort((a, b) => a.paceSecondsPerMeter - b.paceSecondsPerMeter)
+        .slice(0, 3)
+    );
+    for (const row of rows) {
+      row.isSlowest = slowestRows.has(row);
+      row.isFastest = fastestRows.has(row);
+    }
+
+    return rows;
+  }
+
+  function findClosestTrackPoint(control, startIndex) {
+    let best = null;
+    for (let index = startIndex; index < trackPoints.length; index += 1) {
+      const point = trackPoints[index];
+      const distanceMeters = haversineMeters(point, control);
+      const seconds = trackPointSeconds(point, index);
+      if (!best || distanceMeters < best.distanceMeters) {
+        best = {
+          index,
+          point,
+          distanceMeters,
+          seconds,
+        };
+      }
+    }
+    return best;
+  }
+
+  function trackPointSeconds(point, index) {
+    if (point.time) {
+      const timestamp = Date.parse(point.time);
+      if (!Number.isNaN(timestamp)) {
+        return timestamp / 1000;
+      }
+    }
+    return index;
+  }
+
+  function courseStageDistanceMeters(previousControl, currentControl) {
+    const previousIndex = previousControl.index - 1;
+    const currentIndex = currentControl.index - 1;
+    if (currentIndex <= previousIndex) {
+      return 0;
+    }
+
+    let total = 0;
+    for (let index = previousIndex + 1; index <= currentIndex; index += 1) {
+      total += haversineMeters(courseControls[index - 1], courseControls[index]);
+    }
+    return total;
+  }
+
+  function formatDistance(meters) {
+    if (meters === null || typeof meters === "undefined") {
+      return "—";
+    }
+    if (meters < 1000) {
+      return `${Math.round(meters)} м`;
+    }
+    return `${(meters / 1000).toFixed(2)} км`;
+  }
+
+  function formatPacePerMeter(value) {
+    if (value === null || typeof value === "undefined") {
+      return "—";
+    }
+    return value.toFixed(2);
+  }
+
+  function formatDuration(seconds) {
+    const total = Math.max(Math.round(seconds), 0);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const rest = total % 60;
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+    }
+    return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
   }
 
   function serializedTrackPoint(point) {
