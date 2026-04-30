@@ -504,7 +504,7 @@ textarea {
   padding: 8px 10px;
   border-bottom: 1px solid #e3e9ed;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .splits-table th {
@@ -520,8 +520,43 @@ textarea {
 
 .splits-table td:nth-child(2),
 .splits-table td:nth-child(3),
-.splits-table td:nth-child(4) {
+.splits-table td:nth-child(4),
+.splits-table td:nth-child(5) {
   white-space: nowrap;
+}
+
+.split-action-cell {
+  padding-left: 4px;
+  padding-right: 4px;
+  text-align: right;
+}
+
+.split-analysis-button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #c6d1d7;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334147;
+  cursor: pointer;
+}
+
+.split-analysis-button:hover {
+  border-color: #0f6b4f;
+  color: #0f6b4f;
+}
+
+.split-analysis-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .splits-empty-row td {

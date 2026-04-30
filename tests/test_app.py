@@ -143,7 +143,7 @@ def test_training_player_page_renders_after_import_finish() -> None:
     assert "player-workspace" in response.text
     assert "player.js" in response.text
     assert "splits-table-body" in response.text
-    assert "Сек/метр" in response.text
+    assert "Темп" in response.text
 
 
 def test_training_edit_wizard_prefills_existing_training() -> None:

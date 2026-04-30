@@ -674,7 +674,8 @@
         appendCell(formatDuration(row.absoluteSeconds)),
         appendCell(row.splitSeconds === null ? "—" : formatDuration(row.splitSeconds)),
         appendCell(formatDistance(row.distanceMeters)),
-        appendCell(formatPacePerMeter(row.paceSecondsPerMeter))
+        appendCell(formatPacePerMeter(row.paceSecondsPerMeter)),
+        appendSplitActionCell(row)
       );
       splitsTableBody.appendChild(tr);
     }
@@ -688,7 +689,7 @@
     const tr = document.createElement("tr");
     tr.className = "splits-empty-row";
     const td = document.createElement("td");
-    td.colSpan = 4;
+    td.colSpan = 6;
     td.textContent = message;
     tr.appendChild(td);
     splitsTableBody.appendChild(tr);
@@ -698,6 +699,31 @@
     const td = document.createElement("td");
     td.textContent = text;
     return td;
+  }
+
+  function appendSplitActionCell(row) {
+    const td = document.createElement("td");
+    td.className = "split-action-cell";
+    const button = document.createElement("button");
+    button.className = "split-analysis-button";
+    button.type = "button";
+    button.setAttribute("aria-label", `Анализ сплита ${row.label}`);
+    button.title = "Анализ сплита";
+    button.appendChild(createSplitAnalysisIcon());
+    td.appendChild(button);
+    return td;
+  }
+
+  function createSplitAnalysisIcon() {
+    const svgIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svgIcon.setAttribute("viewBox", "0 0 24 24");
+    svgIcon.setAttribute("aria-hidden", "true");
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("points", "4 16 9 11 13 14 20 7");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "M4 20h16");
+    svgIcon.append(polyline, path);
+    return svgIcon;
   }
 
   function calculateSplits() {
@@ -716,14 +742,7 @@
     const startSeconds = startMatch.seconds;
     let nextSearchIndex = startMatch.index + 1;
     let previousAbsoluteSeconds = 0;
-
-    rows.push({
-      label: startControl.label || String(startControl.index),
-      absoluteSeconds: 0,
-      splitSeconds: null,
-      distanceMeters: null,
-      paceSecondsPerMeter: null,
-    });
+    let previousControl = startControl;
 
     for (const control of splitControls.slice(1)) {
       const match = findClosestTrackPoint(control, nextSearchIndex);
@@ -736,11 +755,12 @@
         label: control.label || String(control.index),
         absoluteSeconds,
         splitSeconds: Math.max(absoluteSeconds - previousAbsoluteSeconds, 0),
-        distanceMeters: courseStageDistanceMeters(splitControls[rows.length - 1], control),
+        distanceMeters: courseStageDistanceMeters(previousControl, control),
         paceSecondsPerMeter: null,
       });
 
       previousAbsoluteSeconds = absoluteSeconds;
+      previousControl = control;
       nextSearchIndex = match.index + 1;
     }
 
