@@ -26,6 +26,9 @@
   const transform = parseJson(workspace.dataset.transform, null);
   const splitsEngine = window.OrienteeringSplits;
   const courseControls = splitsEngine.normalizeCourseControls(parseJson(workspace.dataset.courseControls, []));
+  const hasRaceResult = workspace.dataset.hasRaceResult === "true";
+  const raceResultSplitGaps = parseJson(workspace.dataset.raceResultSplitGaps, {}) || {};
+  const splitsColumnCount = hasRaceResult ? 7 : 6;
   let trackPoints = parseJson(workspace.dataset.trackPoints, []).map((point, index) => ({
     ...point,
     pixel: transform ? geoToPixel(point) : {pixel_x: 0, pixel_y: 0},
@@ -674,14 +677,20 @@
       } else if (row.isFastest) {
         tr.classList.add("split-fast");
       }
-      tr.append(
+      const cells = [
         appendCell(row.label),
         appendCell(formatDuration(row.absoluteSeconds)),
         appendCell(row.splitSeconds === null ? "—" : formatDuration(row.splitSeconds)),
+      ];
+      if (hasRaceResult) {
+        cells.push(appendGapCell(raceResultSplitGaps[row.label]));
+      }
+      cells.push(
         appendCell(formatDistance(row.distanceMeters)),
         appendCell(formatPacePerMeter(row.paceSecondsPerMeter)),
         appendSplitActionCell(row)
       );
+      tr.append(...cells);
       splitsTableBody.appendChild(tr);
     }
 
@@ -694,7 +703,7 @@
     const tr = document.createElement("tr");
     tr.className = "splits-empty-row";
     const td = document.createElement("td");
-    td.colSpan = 6;
+    td.colSpan = splitsColumnCount;
     td.textContent = message;
     tr.appendChild(td);
     splitsTableBody.appendChild(tr);
@@ -703,6 +712,24 @@
   function appendCell(text) {
     const td = document.createElement("td");
     td.textContent = text;
+    return td;
+  }
+
+  function appendGapCell(gap) {
+    const td = document.createElement("td");
+    if (!gap || !gap.text) {
+      td.textContent = "—";
+      return td;
+    }
+    const span = document.createElement("span");
+    span.classList.add("race-split-gap");
+    if (gap.tone === "hot") {
+      span.classList.add("race-split-gap-hot");
+    } else if (gap.tone === "warm") {
+      span.classList.add("race-split-gap-warm");
+    }
+    span.textContent = gap.text;
+    td.appendChild(span);
     return td;
   }
 

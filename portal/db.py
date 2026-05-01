@@ -367,6 +367,26 @@ async def get_race_result(conn: aiosqlite.Connection, race_result_id: str) -> di
     return result
 
 
+async def get_latest_race_result_for_training(conn: aiosqlite.Connection, training_id: str) -> dict[str, Any] | None:
+    cursor = await conn.execute(
+        """
+        SELECT *
+        FROM race_results
+        WHERE training_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (training_id,),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        return None
+    result = race_result_from_row(row)
+    result["participant_count"] = len(result["participants"])
+    result["self_participant"] = _self_participant(result)
+    return result
+
+
 async def set_import_draft_map_image(
     conn: aiosqlite.Connection,
     draft_id: str,

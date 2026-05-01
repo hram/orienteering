@@ -23,6 +23,8 @@
         data-transform='{{ training.georef_transform | tojson }}'
         data-course-controls='{{ training.course_controls | tojson }}'
         data-track-points='{{ training.track_points | tojson }}'
+        data-has-race-result="{{ 'true' if training.has_race_result else 'false' }}"
+        data-race-result-split-gaps='{{ training.race_result_split_gaps | tojson }}'
       >
         <div class="panel player-panel">
           <div class="player-controls">
@@ -82,6 +84,7 @@
                   <th>#</th>
                   <th>Время</th>
                   <th>Сплит</th>
+                  {% if training.has_race_result %}<th>Отст.</th>{% endif %}
                   <th>Дист.</th>
                   <th>Темп</th>
                   <th aria-label="Действия"></th>
@@ -89,7 +92,7 @@
               </thead>
               <tbody id="splits-table-body">
                 <tr class="splits-empty-row">
-                  <td colspan="6">Загрузите трек, чтобы увидеть сплиты.</td>
+                  <td colspan="{{ 7 if training.has_race_result else 6 }}">Загрузите трек, чтобы увидеть сплиты.</td>
                 </tr>
               </tbody>
             </table>

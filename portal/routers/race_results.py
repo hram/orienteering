@@ -208,8 +208,83 @@ def _compact_time(value: str | None) -> str:
 
 
 def _prepare_race_result_view(result: dict) -> None:
-    for participant in result.get("participants", []):
+    participants = result.get("participants", [])
+    leader_split_by_split = _leader_split_seconds_by_split(participants)
+    self_row_index = result.get("self_row_index")
+    self_participant = next((participant for participant in participants if participant.get("row_index") == self_row_index), None)
+    gap_ranking = _rank_gap_split_indexes(self_participant, leader_split_by_split)
+    hot_gap_indexes = set(gap_ranking[:3])
+    warm_gap_indexes = set(gap_ranking[3:5])
+
+    for participant in participants:
         participant["display_result"] = _compact_time(participant.get("result"))
+        if participant.get("row_index") != self_row_index:
+            continue
+        for split_index, split in enumerate(participant.get("splits", [])):
+            split_time = split.get("split") or {}
+            seconds = split_time.get("seconds")
+            leader_seconds = leader_split_by_split[split_index] if split_index < len(leader_split_by_split) else None
+            if seconds is None or leader_seconds is None:
+                split["leader_gap_text"] = ""
+                split["leader_gap_tone"] = ""
+                continue
+            split["leader_gap_text"] = _compact_gap(seconds - leader_seconds)
+            if split_index in hot_gap_indexes:
+                split["leader_gap_tone"] = "hot"
+            elif split_index in warm_gap_indexes:
+                split["leader_gap_tone"] = "warm"
+            else:
+                split["leader_gap_tone"] = ""
+
+
+def _leader_split_seconds_by_split(participants: list[dict]) -> list[int | None]:
+    split_count = max((len(participant.get("splits", [])) for participant in participants), default=0)
+    leader_seconds: list[int | None] = []
+    for split_index in range(split_count):
+        best_value = None
+        for participant in participants:
+            splits = participant.get("splits", [])
+            if split_index >= len(splits):
+                continue
+            split_time = splits[split_index].get("split") or {}
+            seconds = split_time.get("seconds")
+            if seconds is None:
+                continue
+            if best_value is None or seconds < best_value:
+                best_value = seconds
+        leader_seconds.append(best_value)
+    return leader_seconds
+
+
+def _rank_gap_split_indexes(self_participant: dict | None, leader_split_by_split: list[int | None]) -> list[int]:
+    if not self_participant:
+        return []
+    gaps: list[tuple[int, int]] = []
+    for split_index, split in enumerate(self_participant.get("splits", [])):
+        split_time = split.get("split") or {}
+        seconds = split_time.get("seconds")
+        leader_seconds = leader_split_by_split[split_index] if split_index < len(leader_split_by_split) else None
+        if seconds is None or leader_seconds is None:
+            continue
+        gap_seconds = seconds - leader_seconds
+        if gap_seconds <= 0:
+            continue
+        gaps.append((split_index, gap_seconds))
+    gaps.sort(key=lambda item: item[1], reverse=True)
+    return [split_index for split_index, _ in gaps]
+
+
+def _compact_gap(seconds: int | None) -> str:
+    if seconds is None:
+        return ""
+    sign = "+" if seconds >= 0 else "-"
+    total = abs(int(seconds))
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    rest = total % 60
+    if hours > 0:
+        return f"{sign}{hours}:{minutes:02d}:{rest:02d}"
+    return f"{sign}{minutes:02d}:{rest:02d}"
 
 
 def _training_view_model(training: dict) -> dict:

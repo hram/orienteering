@@ -12,6 +12,7 @@ from portal.db import (
     create_edit_import_draft,
     create_import_draft,
     finalize_import_draft,
+    get_latest_race_result_for_training,
     get_import_draft,
     get_training_player,
     list_trainings,
@@ -108,14 +109,18 @@ async def training_player_page(training_id: str, request: Request) -> HTMLRespon
     conn = await connect_db(normalize_db_path(config.DB_PATH))
     try:
         training = await get_training_player(conn, training_id)
+        race_result = await get_latest_race_result_for_training(conn, training_id)
     finally:
         await conn.close()
     if training is None:
         raise HTTPException(status_code=404, detail="Training not found")
+    training_view = _training_view_model(training)
+    training_view["has_race_result"] = race_result is not None
+    training_view["race_result_split_gaps"] = _race_result_split_gaps(race_result)
     return templates.TemplateResponse(
         request,
         "training_player.html",
-        {"training": _training_view_model(training)},
+        {"training": training_view},
     )
 
 
@@ -417,6 +422,87 @@ def _training_view_model(training: dict) -> dict:
         if relative is not None:
             payload["map_image_url"] = f"/uploads/{relative.as_posix()}"
     return payload
+
+
+def _race_result_split_gaps(race_result: dict | None) -> dict[str, dict[str, str]]:
+    if not race_result:
+        return {}
+    participants = race_result.get("participants", [])
+    self_participant = race_result.get("self_participant")
+    if not participants or not self_participant:
+        return {}
+
+    split_count = max((len(participant.get("splits", [])) for participant in participants), default=0)
+    leader_split_seconds: list[int | None] = []
+    for split_index in range(split_count):
+        leader_seconds = None
+        for participant in participants:
+            splits = participant.get("splits", [])
+            if split_index >= len(splits):
+                continue
+            split_time = (splits[split_index].get("split") or {})
+            seconds = split_time.get("seconds")
+            if seconds is None:
+                continue
+            if leader_seconds is None or seconds < leader_seconds:
+                leader_seconds = seconds
+        leader_split_seconds.append(leader_seconds)
+
+    positive_gaps: list[tuple[int, int]] = []
+    for split_index, split in enumerate(self_participant.get("splits", [])):
+        split_time = split.get("split") or {}
+        seconds = split_time.get("seconds")
+        leader_seconds = leader_split_seconds[split_index] if split_index < len(leader_split_seconds) else None
+        if seconds is None or leader_seconds is None:
+            continue
+        gap_seconds = seconds - leader_seconds
+        if gap_seconds <= 0:
+            continue
+        positive_gaps.append((split_index, gap_seconds))
+    positive_gaps.sort(key=lambda item: item[1], reverse=True)
+    ranked_indexes = [split_index for split_index, _ in positive_gaps]
+    hot_indexes = set(ranked_indexes[:3])
+    warm_indexes = set(ranked_indexes[3:5])
+
+    gaps: dict[str, dict[str, str]] = {}
+    for split_index, split in enumerate(self_participant.get("splits", [])):
+        split_time = split.get("split") or {}
+        seconds = split_time.get("seconds")
+        leader_seconds = leader_split_seconds[split_index] if split_index < len(leader_split_seconds) else None
+        if seconds is None or leader_seconds is None:
+            continue
+        label = _normalize_split_label(split.get("label"))
+        if not label:
+            continue
+        if split_index in hot_indexes:
+            tone = "hot"
+        elif split_index in warm_indexes:
+            tone = "warm"
+        else:
+            tone = ""
+        gaps[label] = {
+            "text": _compact_gap(seconds - leader_seconds),
+            "tone": tone,
+        }
+    return gaps
+
+
+def _normalize_split_label(label: str | None) -> str:
+    value = (label or "").strip()
+    return "Ф" if value.upper() == "F" else value
+
+
+def _compact_gap(seconds: int | None) -> str:
+    if seconds is None:
+        return ""
+    sign = "+" if seconds >= 0 else "-"
+    total = abs(int(seconds))
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    rest = total % 60
+    if hours > 0:
+        return f"{sign}{hours}:{minutes:02d}:{rest:02d}"
+    return f"{sign}{minutes:02d}:{rest:02d}"
 
 
 def _model_to_dict(model: BaseModel) -> dict:

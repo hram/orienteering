@@ -31,9 +31,14 @@ body.modal-open {
   box-sizing: border-box;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
   height: 100vh;
   padding-top: 12px;
   padding-bottom: 12px;
+}
+
+.shell.wide.player-shell {
+  max-width: none;
 }
 
 .shell.wide.race-result-shell {
@@ -275,6 +280,20 @@ textarea {
   display: block;
   margin-top: 2px;
   color: #66747c;
+}
+
+.race-table td small.race-split-gap {
+  color: #66747c;
+}
+
+.race-table td small.race-split-gap-hot {
+  color: #b21f5b;
+  font-weight: 700;
+}
+
+.race-table td small.race-split-gap-warm {
+  color: #d97706;
+  font-weight: 700;
 }
 
 .race-table td.race-best-split-cell {
@@ -539,7 +558,7 @@ textarea {
 
 .player-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 480px);
   gap: 16px;
   align-items: stretch;
   margin-top: 0;
@@ -640,7 +659,6 @@ textarea {
 .splits-table-wrap {
   min-height: 0;
   overflow: auto;
-  max-height: calc(100vh - 220px);
 }
 
 .splits-table {
@@ -962,14 +980,20 @@ textarea {
 }
 
 .split-fastest td {
-  color: #b21f5b;
   background: rgb(178 31 91 / 8%);
-  font-weight: 700;
 }
 
 .split-fast td {
-  color: #0f6b4f;
   background: rgb(15 107 79 / 8%);
+}
+
+.splits-table td .race-split-gap-hot {
+  color: #b21f5b;
+  font-weight: 700;
+}
+
+.splits-table td .race-split-gap-warm {
+  color: #d97706;
   font-weight: 700;
 }
 

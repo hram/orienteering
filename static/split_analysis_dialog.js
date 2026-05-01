@@ -23,6 +23,7 @@
   let athleteMarker = null;
   let analysisSeconds = 0;
   let scrubPointerId = null;
+  let paceSeries = [];
 
   closeButton?.addEventListener("click", close);
   debugSnapshotButton?.addEventListener("click", openDebugSnapshot);
@@ -196,13 +197,12 @@
     const trackSegment = splitTrackSegment(row);
     const baseSeconds = trackSegment[0]?.seconds || 0;
     const series = calculateTrackPaceSeries(trackSegment, baseSeconds);
+    paceSeries = series;
     const duration = Math.max(row.splitSeconds || 0, 1);
     if (series.length < 2) {
       paceStatus.textContent = "нет данных";
       return;
     }
-    const average = series.reduce((sum, point) => sum + point.pace, 0) / series.length;
-    paceStatus.textContent = `${formatPace(average)} мин/км`;
     if (!root.Chart) {
       paceStatus.textContent = "график недоступен";
       return;
@@ -271,6 +271,7 @@
       },
       plugins: [playheadPlugin],
     });
+    updatePaceStatus();
   }
 
   async function snapshotDataUrl() {
@@ -446,6 +447,7 @@
     }
     analysisSeconds = clamp(seconds, 0, Math.max(active.row.splitSeconds || 0, 0));
     updateAthlete(analysisSeconds);
+    updatePaceStatus();
     chartInstance?.update("none");
   }
 
@@ -512,6 +514,31 @@
     }
     const padding = Math.max((max - min) * 0.12, 0.3);
     return {min: Math.max(0, min - padding), max: max + padding};
+  }
+
+  function updatePaceStatus() {
+    if (!paceStatus || !active) {
+      return;
+    }
+    if (paceSeries.length < 2) {
+      paceStatus.textContent = "нет данных";
+      return;
+    }
+    const pace = paceAt(analysisSeconds);
+    paceStatus.textContent = pace ? `${formatPace(pace)} мин/км` : "--:-- мин/км";
+  }
+
+  function paceAt(seconds) {
+    if (!paceSeries.length) {
+      return null;
+    }
+    let closest = paceSeries[0];
+    for (const point of paceSeries) {
+      if (Math.abs(point.seconds - seconds) < Math.abs(closest.seconds - seconds)) {
+        closest = point;
+      }
+    }
+    return closest.pace;
   }
 
   function destroyPaceChart() {

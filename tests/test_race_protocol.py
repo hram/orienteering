@@ -35,6 +35,45 @@ def test_parse_race_protocol_html() -> None:
     assert participant["splits"][1]["split"]["rank"] == 16
 
 
+def test_prepare_race_result_view_marks_top_gap_tiers() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "self_row_index": 0,
+        "participants": [
+            {
+                "row_index": 0,
+                "result": "00:10:00",
+                "splits": [
+                    {"split": {"seconds": 30}},
+                    {"split": {"seconds": 28}},
+                    {"split": {"seconds": 26}},
+                    {"split": {"seconds": 24}},
+                    {"split": {"seconds": 22}},
+                    {"split": {"seconds": 20}},
+                ],
+            },
+            {
+                "row_index": 1,
+                "result": "00:09:00",
+                "splits": [
+                    {"split": {"seconds": 10}},
+                    {"split": {"seconds": 10}},
+                    {"split": {"seconds": 10}},
+                    {"split": {"seconds": 10}},
+                    {"split": {"seconds": 10}},
+                    {"split": {"seconds": 10}},
+                ],
+            },
+        ],
+    }
+
+    _prepare_race_result_view(result)
+
+    tones = [split["leader_gap_tone"] for split in result["participants"][0]["splits"]]
+    assert tones == ["hot", "hot", "hot", "warm", "warm", ""]
+
+
 def test_race_protocol_import_flow(monkeypatch) -> None:
     from portal.routers import race_results
 
@@ -97,5 +136,7 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert "race_result.js" in detail.text
     assert 'data-split-label="1"' in detail.text
     assert "race-split-analysis-button" in detail.text
+    assert "race-split-gap-hot" in detail.text
+    assert "+00:16" in detail.text
     assert re.search(r"Храмова\s+Полина", detail.text)
     assert "Ж14" in listing.text

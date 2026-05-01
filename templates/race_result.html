@@ -79,6 +79,9 @@
                     <td class="{% if split.split and split.split.rank == 1 %}race-best-split-cell{% endif %}">
                       {% if split.cumulative %}<span>{{ split.cumulative.time }}{% if split.cumulative.rank %} ({{ split.cumulative.rank }}){% endif %}</span>{% endif %}
                       {% if split.split %}<small>{{ split.split.time }}{% if split.split.rank %} ({{ split.split.rank }}){% endif %}</small>{% endif %}
+                      {% if participant.row_index == result.self_row_index and split.leader_gap_text %}
+                        <small class="race-split-gap{% if split.leader_gap_tone == 'hot' %} race-split-gap-hot{% elif split.leader_gap_tone == 'warm' %} race-split-gap-warm{% endif %}">{{ split.leader_gap_text }}</small>
+                      {% endif %}
                       {% if participant.row_index == result.self_row_index and result.training_id %}
                         <button
                           class="race-split-analysis-button"
