@@ -15,6 +15,22 @@ const eventMeta = "Черновой протокол";
 const db = "Ж14| ||п/п|Фамилия, Имя|Номер|Результат|Место|Отст.|#1 (31)<br>100 m|#2 (32)<br>110 m|#3 (33)<br>120 m|#4 (34)<br>130 m|#5 (35)<br>140 m|#6 (36)<br>150 m|#7 (37)<br>160 m|#8 (38)<br>170 m|#F(240)||1|Храмова<br>Полина|1566|00:02:15|2|+0:45|0:19(2)<br>0:19(2)|0:37(2)<br>0:18(2)|0:54(2)<br>0:17(2)|1:10(2)<br>0:16(2)|1:25(2)<br>0:15(2)|1:39(2)<br>0:14(2)|1:52(2)<br>0:13(2)|2:04(2)<br>0:12(2)|2:15(2)<br>0:11(2)||2|Иванова<br>Анна|1501|00:01:30|1| |0:10(1)<br>0:10(1)|0:20(1)<br>0:10(1)|0:30(1)<br>0:10(1)|0:40(1)<br>0:10(1)|0:50(1)<br>0:10(1)|1:00(1)<br>0:10(1)|1:10(1)<br>0:10(1)|1:20(1)<br>0:10(1)|1:30(1)<br>0:10(1)|||М14| ||п/п|Фамилия, Имя|Номер|Результат|Место|Отст.|#1 (54)<br>149 m|#F(240)||1|Петров<br>Иван|201|00:10:00|1| |1:00(1)<br>1:00(1)|10:00(1)<br>0:25(1)|||";
 </script>"""
 
+LEGACY_PROTOCOL = """<!doctype html>
+<meta content='text/html'; charset='utf-8' http-equiv='Content-Type'>
+<h1>Снежная тропа. Кросс-спринт. Промежуточные времена</h1>
+<h3>Данный протокол не является официальным документом</h3>
+<h2>Ж10</h2>
+<table class='rezult'>
+<tr><th>№ п/п </th><th>Номер </th><th>Фамилия, Имя </th><th>Команда </th><th>Результат </th><th>Место </th><th>Отставание </th><th>#1 (54) </th><th>#2 (55) </th><th>#F(240) </th></tr>
+<tr><td><nobr>1</td><td><nobr>3242</td><td class='cr'><nobr>Яковлева<br>Мария</td><td class='cr'><nobr>ДТ Пушкин</td><td><nobr>00:11:51</td><td><nobr>1</td><td><nobr></td><td><b><nobr>1:28(1)</b><br></td><td><b><nobr>3:24(1)</b><br>1:56(6)</td><td><b><nobr>11:51(1)</b><br>0:15(1)</td></tr>
+<tr><td><nobr>2</td><td><nobr>3307</td><td class='cr'><nobr>Болдина<br>Мария</td><td class='cr'><nobr>ГБУ ДО СШ Экран дельта</td><td><nobr>00:12:39</td><td><nobr>2</td><td><nobr>+0:48</td><td><nobr>4:00(16)<br></td><td><nobr>5:35(10)<br>1:35(1)</td><td><nobr>12:39(2)</td></tr>
+</table>
+<h2>М10</h2>
+<table class='rezult'>
+<tr><th>№ п/п </th><th>Номер </th><th>Фамилия, Имя </th><th>Команда </th><th>Результат </th><th>Место </th><th>Отставание </th><th>#1 (31) </th><th>#F(240) </th></tr>
+<tr><td><nobr>1</td><td><nobr>5001</td><td class='cr'><nobr>Иванов<br>Пётр</td><td class='cr'><nobr>Личное</td><td><nobr>00:09:10</td><td><nobr>1</td><td><nobr></td><td><nobr>1:05(1)<br></td><td><nobr>9:10(1)<br>0:14(1)</td></tr>
+</table>"""
+
 
 def test_parse_race_protocol_html() -> None:
     protocol = parse_race_protocol_html(SAMPLE_PROTOCOL)
@@ -33,6 +49,31 @@ def test_parse_race_protocol_html() -> None:
     assert participant["name"] == "Храмова Полина"
     assert participant["splits"][1]["split"]["seconds"] == 18
     assert participant["splits"][1]["split"]["rank"] == 2
+
+
+def test_parse_legacy_race_protocol_html() -> None:
+    protocol = parse_race_protocol_html(LEGACY_PROTOCOL)
+
+    assert protocol.event_name == "Снежная тропа. Кросс-спринт. Промежуточные времена"
+    assert protocol.event_meta == "Данный протокол не является официальным документом"
+    assert len(protocol.groups) == 2
+    group = protocol.groups[0]
+    assert group["name"] == "Ж10"
+    assert group["controls"][0] == {
+        "column_index": 7,
+        "label": "1",
+        "code": "54",
+        "distance_meters": None,
+    }
+    participant = group["participants"][0]
+    assert participant["name"] == "Яковлева Мария"
+    assert participant["bib"] == "3242"
+    assert participant["result"] == "00:11:51"
+    assert participant["splits"][0]["cumulative"]["time"] == "1:28"
+    assert participant["splits"][0]["split"]["seconds"] == 88
+    assert participant["splits"][1]["split"]["seconds"] == 116
+    assert participant["splits"][1]["split"]["rank"] == 6
+    assert participant["splits"][1]["cumulative"]["time"] == "3:24"
 
 
 def test_prepare_race_result_view_marks_top_gap_tiers() -> None:
@@ -78,6 +119,66 @@ def test_prepare_race_result_view_marks_top_gap_tiers() -> None:
 
     tones = [split["leader_gap_tone"] for split in result["participants"][0]["splits"]]
     assert tones == ["hot", "hot", "hot", "warm", "warm", "warm", "good", "good", "good"]
+
+
+def test_prepare_race_result_view_uses_first_cumulative_as_split_for_virtual_leader() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "self_row_index": 0,
+        "controls": [{}, {}, {}],
+        "participants": [
+            {
+                "row_index": 0,
+                "result": "00:07:00",
+                "splits": [
+                    {
+                        "label": "1",
+                        "cumulative": {"time": "2:00", "seconds": 120, "rank": 2},
+                        "split": None,
+                    },
+                    {
+                        "label": "2",
+                        "cumulative": {"time": "4:30", "seconds": 270, "rank": 2},
+                        "split": {"time": "2:30", "seconds": 150, "rank": 2},
+                    },
+                    {
+                        "label": "F",
+                        "cumulative": {"time": "7:00", "seconds": 420, "rank": 2},
+                        "split": {"time": "2:30", "seconds": 150, "rank": 2},
+                    },
+                ],
+            },
+            {
+                "row_index": 1,
+                "result": "00:06:00",
+                "splits": [
+                    {
+                        "label": "1",
+                        "cumulative": {"time": "1:30", "seconds": 90, "rank": 1},
+                        "split": None,
+                    },
+                    {
+                        "label": "2",
+                        "cumulative": {"time": "3:30", "seconds": 210, "rank": 1},
+                        "split": {"time": "2:00", "seconds": 120, "rank": 1},
+                    },
+                    {
+                        "label": "F",
+                        "cumulative": {"time": "6:00", "seconds": 360, "rank": 1},
+                        "split": {"time": "2:30", "seconds": 150, "rank": 1},
+                    },
+                ],
+            },
+        ],
+    }
+
+    _prepare_race_result_view(result)
+
+    assert result["virtual_leader"] is not None
+    assert result["virtual_leader"]["name"] == "Идеальный лидер"
+    assert result["virtual_leader"]["splits"][0]["split"]["seconds"] == 90
+    assert result["participants"][0]["splits"][0]["leader_gap_text"] == "+00:30"
 
 
 def test_race_protocol_import_flow(monkeypatch) -> None:
@@ -130,6 +231,7 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
         detail = client.get(save.headers["location"])
         player = client.get(f"/trainings/{training_id}/play")
         listing = client.get("/race-results")
+        trainings_after_save = client.get("/trainings")
 
     assert preview.status_code == 200
     assert "Храмова Полина" in preview.text
@@ -152,3 +254,72 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert player.status_code == 200
     assert "split-problems-only" in player.text
     assert "Проблемы" in player.text
+    assert f'/race-results/{save.headers["location"].split("/")[-1]}' in trainings_after_save.text
+    assert f"/trainings/{training_id}/race-result/import" not in trainings_after_save.text
+
+
+def test_race_result_can_be_deleted_from_listing(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: SAMPLE_PROTOCOL)
+
+    with TestClient(app) as client:
+        preview = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://example.test/splits.html"},
+        )
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://example.test/splits.html",
+                "group_name": "Ж14",
+                "self_row_index": "0",
+            },
+            follow_redirects=False,
+        )
+        race_result_id = save.headers["location"].split("/")[-1]
+        listing_before = client.get("/race-results")
+        delete_response = client.post(f"/race-results/{race_result_id}/delete", follow_redirects=False)
+        listing_after = client.get("/race-results")
+        detail_after = client.get(f"/race-results/{race_result_id}")
+
+    assert preview.status_code == 200
+    assert save.status_code == 303
+    assert f"/race-results/{race_result_id}" in listing_before.text
+    assert "Удалить" in listing_before.text
+    assert delete_response.status_code == 303
+    assert delete_response.headers["location"] == "/race-results"
+    assert f"/race-results/{race_result_id}" not in listing_after.text
+    assert detail_after.status_code == 404
+
+
+def test_legacy_race_protocol_import_flow(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: LEGACY_PROTOCOL)
+
+    with TestClient(app) as client:
+        preview = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://example.test/legacy-splits.htm"},
+        )
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://example.test/legacy-splits.htm",
+                "group_name": "Ж10",
+                "self_row_index": "1",
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert preview.status_code == 200
+    assert "Яковлева Мария" in preview.text
+    assert "Болдина Мария" in preview.text
+    assert save.status_code == 303
+    assert detail.status_code == 200
+    assert "Снежная тропа. Кросс-спринт. Промежуточные времена" in detail.text
+    assert "Ж10" in detail.text
+    assert re.search(r"Болдина\s+Мария", detail.text)
+    assert "<nobr>" not in detail.text

@@ -108,6 +108,8 @@ def test_finish_training_import_redirects_to_trainings() -> None:
     assert response.status_code == 303
     assert response.headers["location"] == "/trainings"
     assert "Finish test" in list_response.text
+    training_id = re.search(r'href="/trainings/([0-9a-f]+)/race-result/import"', list_response.text)
+    assert training_id is not None
 
 
 def test_training_player_page_renders_after_import_finish() -> None:

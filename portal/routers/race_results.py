@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 
 from portal.db import (
     connect_db,
+    delete_race_result,
     get_race_result,
     get_training,
     get_training_player,
@@ -177,6 +178,18 @@ async def race_result_page(race_result_id: str, request: Request) -> HTMLRespons
     )
 
 
+@router.post("/race-results/{race_result_id}/delete")
+async def race_result_delete(race_result_id: str) -> RedirectResponse:
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        deleted = await delete_race_result(conn, race_result_id)
+    finally:
+        await conn.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Race result not found")
+    return RedirectResponse("/race-results", status_code=303)
+
+
 async def _load_protocol(url: str):
     normalized_url = url.strip()
     if not normalized_url.startswith(("http://", "https://")):
@@ -220,7 +233,7 @@ def _prepare_race_result_view(result: dict) -> None:
     result["self_problem_total_gap"] = _self_problem_total_gap(self_participant, leader_split_by_split, problem_indexes)
     if self_participant:
         for split_index, split in enumerate(self_participant.get("splits", [])):
-            split_time = split.get("split")
+            split_time = _split_stage_time(split, split_index)
             if not split_time:
                 continue
             split_time["short_time"] = _normalize_short_time(split_time.get("time"))
@@ -232,7 +245,7 @@ def _prepare_race_result_view(result: dict) -> None:
         if participant.get("row_index") != self_row_index:
             continue
         for split_index, split in enumerate(participant.get("splits", [])):
-            split_time = split.get("split") or {}
+            split_time = _split_stage_time(split, split_index) or {}
             seconds = split_time.get("seconds")
             leader_seconds = leader_split_by_split[split_index] if split_index < len(leader_split_by_split) else None
             if seconds is None or leader_seconds is None:
@@ -259,7 +272,7 @@ def _leader_split_seconds_by_split(participants: list[dict]) -> list[int | None]
             splits = participant.get("splits", [])
             if split_index >= len(splits):
                 continue
-            split_time = splits[split_index].get("split") or {}
+            split_time = _split_stage_time(splits[split_index], split_index) or {}
             seconds = split_time.get("seconds")
             if seconds is None:
                 continue
@@ -277,7 +290,7 @@ def _classify_gap_indexes(
         return set(), set(), set()
     gaps: list[tuple[int, int]] = []
     for split_index, split in enumerate(self_participant.get("splits", [])):
-        split_time = split.get("split") or {}
+        split_time = _split_stage_time(split, split_index) or {}
         seconds = split_time.get("seconds")
         leader_seconds = leader_split_by_split[split_index] if split_index < len(leader_split_by_split) else None
         if seconds is None or leader_seconds is None:
@@ -396,13 +409,22 @@ def _self_problem_total_gap(
     for split_index in problem_indexes:
         if split_index >= len(splits):
             continue
-        split_seconds = (splits[split_index].get("split") or {}).get("seconds")
+        split_seconds = (_split_stage_time(splits[split_index], split_index) or {}).get("seconds")
         leader_seconds = leader_split_seconds[split_index] if split_index < len(leader_split_seconds) else None
         if split_seconds is None or leader_seconds is None:
             continue
         total_gap += split_seconds - leader_seconds
         has_data = True
     return _compact_gap(total_gap) if has_data else ""
+
+
+def _split_stage_time(split: dict, split_index: int) -> dict | None:
+    split_time = split.get("split")
+    if split_time:
+        return split_time
+    if split_index == 0:
+        return split.get("cumulative")
+    return None
 
 
 def _compact_gap(seconds: int | None) -> str:

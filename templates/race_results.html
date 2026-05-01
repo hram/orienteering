@@ -32,7 +32,12 @@
                     {% if result.self_participant %} · Я: {{ result.self_participant.name }}{% endif %}
                   </span>
                 </div>
-                <a class="button compact" href="/race-results/{{ result.race_result_id }}">Открыть</a>
+                <div class="training-actions">
+                  <a class="button compact" href="/race-results/{{ result.race_result_id }}">Открыть</a>
+                  <form method="post" action="/race-results/{{ result.race_result_id }}/delete">
+                    <button class="button compact" type="submit">Удалить</button>
+                  </form>
+                </div>
               </article>
             {% endfor %}
           </div>

@@ -291,7 +291,21 @@ async def update_import_draft_details(
 
 
 async def list_trainings(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
-    cursor = await conn.execute("SELECT * FROM trainings ORDER BY date DESC, created_at DESC")
+    cursor = await conn.execute(
+        """
+        SELECT
+            trainings.*,
+            (
+                SELECT race_results.race_result_id
+                FROM race_results
+                WHERE race_results.training_id = trainings.training_id
+                ORDER BY race_results.created_at DESC
+                LIMIT 1
+            ) AS latest_race_result_id
+        FROM trainings
+        ORDER BY trainings.date DESC, trainings.created_at DESC
+        """
+    )
     rows = await cursor.fetchall()
     return [dict(row) for row in rows]
 
@@ -385,6 +399,15 @@ async def get_latest_race_result_for_training(conn: aiosqlite.Connection, traini
     result["participant_count"] = len(result["participants"])
     result["self_participant"] = _self_participant(result)
     return result
+
+
+async def delete_race_result(conn: aiosqlite.Connection, race_result_id: str) -> bool:
+    cursor = await conn.execute(
+        "DELETE FROM race_results WHERE race_result_id = ?",
+        (race_result_id,),
+    )
+    await conn.commit()
+    return cursor.rowcount > 0
 
 
 async def set_import_draft_map_image(
