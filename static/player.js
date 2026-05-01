@@ -21,6 +21,7 @@
   const trackSaveStatus = document.querySelector("#track-save-status");
   const splitsStatus = document.querySelector("#splits-status");
   const splitsTableBody = document.querySelector("#splits-table-body");
+  const splitProblemsOnly = document.querySelector("#split-problems-only");
 
   const trainingId = workspace.dataset.trainingId;
   const transform = parseJson(workspace.dataset.transform, null);
@@ -154,6 +155,10 @@
 
   saveTrackButton?.addEventListener("click", () => {
     saveTrack();
+  });
+
+  splitProblemsOnly?.addEventListener("change", () => {
+    renderSplitsTable();
   });
 
   drawStaticLayers();
@@ -670,7 +675,16 @@
       return;
     }
 
-    for (const row of splits) {
+    const visibleSplits = splitProblemsOnly?.checked ? splits.filter(isProblemSplit) : splits;
+    if (!visibleSplits.length) {
+      appendEmptySplitsRow("Проблемных сплитов нет.");
+      if (splitsStatus) {
+        splitsStatus.textContent = `Рассчитано КП: ${splits.length}. Проблемных нет.`;
+      }
+      return;
+    }
+
+    for (const row of visibleSplits) {
       const tr = document.createElement("tr");
       if (row.isSlowest) {
         tr.classList.add("split-fastest");
@@ -695,8 +709,15 @@
     }
 
     if (splitsStatus) {
-      splitsStatus.textContent = `Рассчитано КП: ${splits.length}.`;
+      splitsStatus.textContent = splitProblemsOnly?.checked
+        ? `Рассчитано КП: ${splits.length}. Проблемы: ${visibleSplits.length}.`
+        : `Рассчитано КП: ${splits.length}.`;
     }
+  }
+
+  function isProblemSplit(row) {
+    const gap = raceResultSplitGaps[row.label];
+    return row.isSlowest || gap?.tone === "hot" || gap?.tone === "warm";
   }
 
   function appendEmptySplitsRow(message) {

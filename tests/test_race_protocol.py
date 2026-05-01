@@ -12,7 +12,7 @@ SAMPLE_PROTOCOL = """<!doctype html>
 <script>
 const eventName = "Тестовый старт";
 const eventMeta = "Черновой протокол";
-const db = "Ж14| ||п/п|Фамилия, Имя|Номер|Результат|Место|Отст.|#1 (58)<br>234 m|#2 (39)<br>301 m|#F(240)||1|Храмова<br>Полина|1566|00:21:00|4|+1:50|4:46(4)<br>4:46(4)|7:31(10)<br>2:45(16)|21:00(4)<br>0:36(15)||2|Иванова<br>Анна|1501|00:20:30|1| |4:30(1)<br>4:30(1)|7:00(1)<br>2:30(1)|20:30(1)<br>0:30(1)|||М14| ||п/п|Фамилия, Имя|Номер|Результат|Место|Отст.|#1 (54)<br>149 m|#F(240)||1|Петров<br>Иван|201|00:10:00|1| |1:00(1)<br>1:00(1)|10:00(1)<br>0:25(1)|||";
+const db = "Ж14| ||п/п|Фамилия, Имя|Номер|Результат|Место|Отст.|#1 (31)<br>100 m|#2 (32)<br>110 m|#3 (33)<br>120 m|#4 (34)<br>130 m|#5 (35)<br>140 m|#6 (36)<br>150 m|#7 (37)<br>160 m|#8 (38)<br>170 m|#F(240)||1|Храмова<br>Полина|1566|00:02:15|2|+0:45|0:19(2)<br>0:19(2)|0:37(2)<br>0:18(2)|0:54(2)<br>0:17(2)|1:10(2)<br>0:16(2)|1:25(2)<br>0:15(2)|1:39(2)<br>0:14(2)|1:52(2)<br>0:13(2)|2:04(2)<br>0:12(2)|2:15(2)<br>0:11(2)||2|Иванова<br>Анна|1501|00:01:30|1| |0:10(1)<br>0:10(1)|0:20(1)<br>0:10(1)|0:30(1)<br>0:10(1)|0:40(1)<br>0:10(1)|0:50(1)<br>0:10(1)|1:00(1)<br>0:10(1)|1:10(1)<br>0:10(1)|1:20(1)<br>0:10(1)|1:30(1)<br>0:10(1)|||М14| ||п/п|Фамилия, Имя|Номер|Результат|Место|Отст.|#1 (54)<br>149 m|#F(240)||1|Петров<br>Иван|201|00:10:00|1| |1:00(1)<br>1:00(1)|10:00(1)<br>0:25(1)|||";
 </script>"""
 
 
@@ -26,13 +26,13 @@ def test_parse_race_protocol_html() -> None:
     assert group["controls"][0] == {
         "column_index": 6,
         "label": "1",
-        "code": "58",
-        "distance_meters": 234,
+        "code": "31",
+        "distance_meters": 100,
     }
     participant = group["participants"][0]
     assert participant["name"] == "Храмова Полина"
-    assert participant["splits"][1]["split"]["seconds"] == 165
-    assert participant["splits"][1]["split"]["rank"] == 16
+    assert participant["splits"][1]["split"]["seconds"] == 18
+    assert participant["splits"][1]["split"]["rank"] == 2
 
 
 def test_prepare_race_result_view_marks_top_gap_tiers() -> None:
@@ -51,12 +51,18 @@ def test_prepare_race_result_view_marks_top_gap_tiers() -> None:
                     {"split": {"seconds": 24}},
                     {"split": {"seconds": 22}},
                     {"split": {"seconds": 20}},
+                    {"split": {"seconds": 18}},
+                    {"split": {"seconds": 16}},
+                    {"split": {"seconds": 14}},
                 ],
             },
             {
                 "row_index": 1,
                 "result": "00:09:00",
                 "splits": [
+                    {"split": {"seconds": 10}},
+                    {"split": {"seconds": 10}},
+                    {"split": {"seconds": 10}},
                     {"split": {"seconds": 10}},
                     {"split": {"seconds": 10}},
                     {"split": {"seconds": 10}},
@@ -71,7 +77,7 @@ def test_prepare_race_result_view_marks_top_gap_tiers() -> None:
     _prepare_race_result_view(result)
 
     tones = [split["leader_gap_tone"] for split in result["participants"][0]["splits"]]
-    assert tones == ["hot", "hot", "hot", "warm", "warm", ""]
+    assert tones == ["hot", "hot", "hot", "warm", "warm", "warm", "good", "good", "good"]
 
 
 def test_race_protocol_import_flow(monkeypatch) -> None:
@@ -122,6 +128,7 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
         )
         assert save.headers["location"].startswith("/race-results/")
         detail = client.get(save.headers["location"])
+        player = client.get(f"/trainings/{training_id}/play")
         listing = client.get("/race-results")
 
     assert preview.status_code == 200
@@ -137,6 +144,11 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert 'data-split-label="1"' in detail.text
     assert "race-split-analysis-button" in detail.text
     assert "race-split-gap-hot" in detail.text
-    assert "+00:16" in detail.text
+    assert "race-split-gap-warm" in detail.text
+    assert "race-split-gap-good" in detail.text
+    assert "+00:09" in detail.text
     assert re.search(r"Храмова\s+Полина", detail.text)
     assert "Ж14" in listing.text
+    assert player.status_code == 200
+    assert "split-problems-only" in player.text
+    assert "Проблемы" in player.text

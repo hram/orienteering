@@ -75,7 +75,15 @@
         <aside class="panel splits-pane">
           <div class="pane-header">
             <h2>Сплиты</h2>
-            <span id="splits-status" class="muted">Авторасчет по ближайшим КП</span>
+            <div class="splits-header-actions">
+              {% if training.has_race_result %}
+                <label class="race-problem-toggle splits-problem-toggle">
+                  <input id="split-problems-only" type="checkbox">
+                  <span>Проблемы</span>
+                </label>
+              {% endif %}
+              <span id="splits-status" class="muted">Авторасчет по ближайшим КП</span>
+            </div>
           </div>
           <div class="splits-table-wrap">
             <table class="splits-table">

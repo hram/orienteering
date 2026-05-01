@@ -704,6 +704,18 @@ textarea {
   overflow: auto;
 }
 
+.splits-header-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.splits-problem-toggle {
+  font-size: 13px;
+}
+
 .splits-table {
   width: 100%;
   border-collapse: collapse;
