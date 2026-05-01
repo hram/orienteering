@@ -727,6 +727,8 @@
       span.classList.add("race-split-gap-hot");
     } else if (gap.tone === "warm") {
       span.classList.add("race-split-gap-warm");
+    } else if (gap.tone === "good") {
+      span.classList.add("race-split-gap-good");
     }
     span.textContent = gap.text;
     td.appendChild(span);

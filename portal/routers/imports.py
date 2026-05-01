@@ -448,21 +448,25 @@ def _race_result_split_gaps(race_result: dict | None) -> dict[str, dict[str, str
                 leader_seconds = seconds
         leader_split_seconds.append(leader_seconds)
 
-    positive_gaps: list[tuple[int, int]] = []
+    indexed_gaps: list[tuple[int, int]] = []
     for split_index, split in enumerate(self_participant.get("splits", [])):
         split_time = split.get("split") or {}
         seconds = split_time.get("seconds")
         leader_seconds = leader_split_seconds[split_index] if split_index < len(leader_split_seconds) else None
         if seconds is None or leader_seconds is None:
             continue
-        gap_seconds = seconds - leader_seconds
-        if gap_seconds <= 0:
-            continue
-        positive_gaps.append((split_index, gap_seconds))
-    positive_gaps.sort(key=lambda item: item[1], reverse=True)
-    ranked_indexes = [split_index for split_index, _ in positive_gaps]
-    hot_indexes = set(ranked_indexes[:3])
-    warm_indexes = set(ranked_indexes[3:5])
+        indexed_gaps.append((split_index, seconds - leader_seconds))
+
+    good_sorted = sorted(indexed_gaps, key=lambda item: item[1])
+    good_indexes = {split_index for split_index, _ in good_sorted[:3]}
+    remaining = [
+        (split_index, gap_seconds)
+        for split_index, gap_seconds in indexed_gaps
+        if split_index not in good_indexes and gap_seconds > 0
+    ]
+    remaining.sort(key=lambda item: item[1], reverse=True)
+    hot_indexes = {split_index for split_index, _ in remaining[:3]}
+    warm_indexes = {split_index for split_index, _ in remaining[3:6]}
 
     gaps: dict[str, dict[str, str]] = {}
     for split_index, split in enumerate(self_participant.get("splits", [])):
@@ -478,6 +482,8 @@ def _race_result_split_gaps(race_result: dict | None) -> dict[str, dict[str, str
             tone = "hot"
         elif split_index in warm_indexes:
             tone = "warm"
+        elif split_index in good_indexes:
+            tone = "good"
         else:
             tone = ""
         gaps[label] = {

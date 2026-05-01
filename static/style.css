@@ -234,8 +234,28 @@ textarea {
 
 .race-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
+  align-items: center;
+}
+
+.race-summary-toggle {
+  justify-self: end;
+}
+
+.race-problem-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 14px;
+}
+
+.race-problem-toggle input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }
 
 .race-summary div {
@@ -247,7 +267,8 @@ textarea {
   color: #66747c;
 }
 
-.race-table-panel {
+.race-table-panel,
+.race-problem-panel {
   margin-top: 16px;
 }
 
@@ -296,6 +317,11 @@ textarea {
   font-weight: 700;
 }
 
+.race-table td small.race-split-gap-good {
+  color: #0f6b4f;
+  font-weight: 700;
+}
+
 .race-table td.race-best-split-cell {
   background: #dff4e8;
 }
@@ -305,8 +331,8 @@ textarea {
 }
 
 .race-split-analysis-button {
-  display: inline-grid;
-  width: 20px;
+  display: grid;
+  width: 100%;
   height: 20px;
   margin-top: 4px;
   place-items: center;
@@ -342,6 +368,23 @@ textarea {
 .race-self-row td {
   background: rgb(15 107 79 / 10%);
   font-weight: 700;
+}
+
+.race-virtual-leader-row td {
+  background: rgb(21 101 192 / 8%);
+  font-weight: 700;
+}
+
+.race-problem-table td .problem-cell-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.race-problem-table td .problem-cell-pace {
+  display: inline;
+  margin-top: 0;
 }
 
 .edit-button {
@@ -994,6 +1037,11 @@ textarea {
 
 .splits-table td .race-split-gap-warm {
   color: #d97706;
+  font-weight: 700;
+}
+
+.splits-table td .race-split-gap-good {
+  color: #0f6b4f;
   font-weight: 700;
 }
 

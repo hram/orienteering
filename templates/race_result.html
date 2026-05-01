@@ -47,6 +47,14 @@
             <strong>Я</strong>
             <span>{% if result.self_participant %}{{ result.self_participant.name }}{% else %}не выбрано{% endif %}</span>
           </div>
+          {% if result.problem_split_indexes %}
+            <div class="race-summary-toggle">
+              <label class="race-problem-toggle">
+                <input type="checkbox" id="race-problem-toggle">
+                <span>Только проблемы</span>
+              </label>
+            </div>
+          {% endif %}
         </div>
       </section>
 
@@ -80,7 +88,7 @@
                       {% if split.cumulative %}<span>{{ split.cumulative.time }}{% if split.cumulative.rank %} ({{ split.cumulative.rank }}){% endif %}</span>{% endif %}
                       {% if split.split %}<small>{{ split.split.time }}{% if split.split.rank %} ({{ split.split.rank }}){% endif %}</small>{% endif %}
                       {% if participant.row_index == result.self_row_index and split.leader_gap_text %}
-                        <small class="race-split-gap{% if split.leader_gap_tone == 'hot' %} race-split-gap-hot{% elif split.leader_gap_tone == 'warm' %} race-split-gap-warm{% endif %}">{{ split.leader_gap_text }}</small>
+                        <small class="race-split-gap{% if split.leader_gap_tone == 'hot' %} race-split-gap-hot{% elif split.leader_gap_tone == 'warm' %} race-split-gap-warm{% elif split.leader_gap_tone == 'good' %} race-split-gap-good{% endif %}">{{ split.leader_gap_text }}</small>
                       {% endif %}
                       {% if participant.row_index == result.self_row_index and result.training_id %}
                         <button
@@ -89,7 +97,7 @@
                           data-split-label="{{ split.label }}"
                           aria-label="Анализ сплита {{ split.label }}"
                           title="Анализ сплита"
-                        >↗</button>
+                        >↗ Анализ</button>
                       {% endif %}
                     </td>
                   {% endfor %}
@@ -99,7 +107,103 @@
           </table>
         </div>
       </section>
+
+      {% if result.problem_split_indexes %}
+        <section class="panel race-problem-panel" id="race-problem-panel" hidden>
+          <div class="race-table-wrap">
+            <table class="race-table race-problem-table">
+              <thead>
+                <tr>
+                  <th>Участник</th>
+                  <th>Время</th>
+                  {% for control in result.controls %}
+                    {% if loop.index0 in result.problem_split_indexes %}
+                      <th>{{ control.label }}{% if control.distance_meters %}<br>{{ control.distance_meters }} м{% endif %}</th>
+                    {% endif %}
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% if result.virtual_leader %}
+                  <tr class="race-virtual-leader-row">
+                    <td class="race-participant-name">
+                      <span>{{ result.virtual_leader.place }} {{ result.virtual_leader.name }}</span>
+                    </td>
+                    <td>{{ result.virtual_leader.display_result }}</td>
+                    {% for split in result.virtual_leader.splits %}
+                      {% if loop.index0 in result.problem_split_indexes %}
+                        <td>
+                          {% if split.split %}
+                            <div class="problem-cell-row">
+                              <span>{{ split.split.short_time }}</span>
+                              {% if split.split.pace %}<small class="problem-cell-pace">{{ split.split.pace }}</small>{% endif %}
+                            </div>
+                          {% endif %}
+                        </td>
+                      {% endif %}
+                    {% endfor %}
+                  </tr>
+                {% endif %}
+                {% if result.self_participant %}
+                  <tr class="race-self-row">
+                    <td class="race-participant-name">
+                      {% set name_parts = result.self_participant.name.split(" ", 1) %}
+                      <span>{{ name_parts[0] }}</span>
+                      {% if name_parts|length > 1 %}
+                        <small>{{ name_parts[1] }}</small>
+                      {% endif %}
+                    </td>
+                    <td>
+                      <span>{{ result.self_participant.display_result }}</span>
+                      {% if result.self_problem_total_gap %}<small class="race-split-gap race-split-gap-hot">{{ result.self_problem_total_gap }}</small>{% endif %}
+                    </td>
+                    {% for split in result.self_participant.splits %}
+                      {% if loop.index0 in result.problem_split_indexes %}
+                        <td class="{% if split.split and split.split.rank == 1 %}race-best-split-cell{% endif %}">
+                          {% if split.split %}
+                            <div class="problem-cell-row">
+                              <span>{{ split.split.short_time }}{% if split.split.rank %} ({{ split.split.rank }}){% endif %}</span>
+                              {% if split.split.pace %}<small class="problem-cell-pace">{{ split.split.pace }}</small>{% endif %}
+                            </div>
+                          {% endif %}
+                          {% if split.leader_gap_text %}
+                            <small class="race-split-gap{% if split.leader_gap_tone == 'hot' %} race-split-gap-hot{% elif split.leader_gap_tone == 'warm' %} race-split-gap-warm{% elif split.leader_gap_tone == 'good' %} race-split-gap-good{% endif %}">{{ split.leader_gap_text }}</small>
+                          {% endif %}
+                          {% if result.training_id %}
+                            <button
+                              class="race-split-analysis-button"
+                              type="button"
+                              data-split-label="{{ split.label }}"
+                              aria-label="Анализ сплита {{ split.label }}"
+                              title="Анализ сплита"
+                            >↗ Анализ</button>
+                          {% endif %}
+                        </td>
+                      {% endif %}
+                    {% endfor %}
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      {% endif %}
     </main>
+    <script>
+      (function () {
+        const toggle = document.querySelector("#race-problem-toggle");
+        const fullPanel = document.querySelector(".race-table-panel");
+        const problemPanel = document.querySelector("#race-problem-panel");
+        if (!toggle || !fullPanel || !problemPanel) {
+          return;
+        }
+        toggle.addEventListener("change", () => {
+          const showProblem = toggle.checked;
+          fullPanel.hidden = showProblem;
+          problemPanel.hidden = !showProblem;
+        });
+      })();
+    </script>
     {% if training %}
       {% include "partials/split_analysis_dialog.html" %}
       <img id="race-analysis-map-image" src="{{ training.map_image_url }}" alt="" hidden>
