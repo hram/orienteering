@@ -142,6 +142,7 @@ def test_training_player_page_renders_after_import_finish() -> None:
     assert response.status_code == 200
     assert "player-workspace" in response.text
     assert "player.js" in response.text
+    assert "split_analysis_dialog.js" in response.text
     assert "splits-table-body" in response.text
     assert "split-analysis-modal" in response.text
     assert "split-debug-snapshot" in response.text

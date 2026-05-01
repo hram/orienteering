@@ -93,6 +93,7 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert "race-self-row" in detail.text
     assert f"/trainings/{training_id}/play" in detail.text
     assert "split-analysis-modal" in detail.text
+    assert "split_analysis_dialog.js" in detail.text
     assert "race_result.js" in detail.text
     assert 'data-split-label="1"' in detail.text
     assert "race-split-analysis-button" in detail.text
