@@ -13,7 +13,10 @@
           <h1>Тренировки</h1>
           <p>Журнал стартов, тренировок и разборов.</p>
         </div>
-        <a class="button primary" href="/trainings/new">Добавить</a>
+        <div class="actions">
+          <a class="button" href="/race-results">Протоколы</a>
+          <a class="button primary" href="/trainings/new">Добавить</a>
+        </div>
       </header>
 
       <section class="panel">
@@ -30,6 +33,7 @@
                   </span>
                 </div>
                 <div class="training-actions">
+                  <a class="button compact" href="/trainings/{{ training.training_id }}/race-result/import">Протокол</a>
                   <a class="edit-button" href="/trainings/{{ training.training_id }}/edit" aria-label="Редактировать {{ training.title }}" title="Редактировать">✎</a>
                   <a class="play-button" href="/trainings/{{ training.training_id }}/play" aria-label="Play {{ training.title }}" title="Play">
                     <span aria-hidden="true"></span>

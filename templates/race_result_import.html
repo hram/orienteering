@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Импорт протокола</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell narrow">
+      <header class="topbar">
+        <div>
+          <h1>Импорт протокола</h1>
+          <p>
+            {% if training %}
+              {{ training.title }} · вставь URL страницы со сплитами соревнований.
+            {% else %}
+              Вставь URL страницы со сплитами соревнований.
+            {% endif %}
+          </p>
+        </div>
+        <a class="button" href="{% if training %}/trainings{% else %}/race-results{% endif %}">Назад</a>
+      </header>
+
+      <section class="panel">
+        <form class="form-stack" action="{% if training %}/trainings/{{ training.training_id }}/race-result/import/preview{% else %}/race-results/import/preview{% endif %}" method="post">
+          <label>
+            URL протокола
+            <input name="url" type="url" value="{{ url }}" placeholder="https://o-site.spb.ru/_races/260426/260426_split.html" required>
+          </label>
+          {% if error %}
+            <p class="form-error">{{ error }}</p>
+          {% endif %}
+          <div class="actions">
+            <button class="button primary" type="submit">Загрузить группы</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

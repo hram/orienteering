@@ -36,6 +36,12 @@ body.modal-open {
   padding-bottom: 12px;
 }
 
+.shell.wide.race-result-shell {
+  max-width: none;
+  padding-right: 12px;
+  padding-left: 12px;
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -116,6 +122,11 @@ button:disabled {
   color: #66747c;
 }
 
+.form-error {
+  margin: 0;
+  color: #9f1f2f;
+}
+
 .form-stack {
   display: grid;
   gap: 16px;
@@ -177,6 +188,141 @@ textarea {
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
+}
+
+.race-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.race-group-card {
+  display: grid;
+  gap: 14px;
+}
+
+.race-group-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.race-group-card-header h2 {
+  margin-bottom: 2px;
+  font-size: 22px;
+}
+
+.race-group-sample {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.race-group-sample span {
+  border: 1px solid #dce3e7;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #f8fafb;
+  color: #334147;
+  font-size: 13px;
+}
+
+.race-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.race-summary div {
+  display: grid;
+  gap: 4px;
+}
+
+.race-summary span {
+  color: #66747c;
+}
+
+.race-table-panel {
+  margin-top: 16px;
+}
+
+.race-table-wrap {
+  overflow: auto;
+}
+
+.race-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+}
+
+.race-table th,
+.race-table td {
+  border: 1px solid #dce3e7;
+  padding: 6px 8px;
+  text-align: left;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.race-table th {
+  background: #0f3141;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.race-table td small {
+  display: block;
+  margin-top: 2px;
+  color: #66747c;
+}
+
+.race-table td.race-best-split-cell {
+  background: #dff4e8;
+}
+
+.race-self-row td.race-best-split-cell {
+  background: #d5efdf;
+}
+
+.race-split-analysis-button {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  place-items: center;
+  border: 1px solid #0f6b4f;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #0f6b4f;
+  font-size: 12px;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.race-split-analysis-button:hover {
+  background: #0f6b4f;
+  color: #ffffff;
+}
+
+.race-table .race-participant-name {
+  min-width: 120px;
+  white-space: normal;
+}
+
+.race-participant-name span,
+.race-participant-name small {
+  display: block;
+}
+
+.race-participant-name small {
+  margin-top: 0;
+  color: inherit;
+}
+
+.race-self-row td {
+  background: rgb(15 107 79 / 10%);
+  font-weight: 700;
 }
 
 .edit-button {
@@ -695,6 +841,14 @@ textarea {
 .split-pace-chart {
   width: 100%;
   height: 100%;
+}
+
+.split-pace-chart.scrubbing {
+  cursor: grabbing;
+}
+
+.split-athlete-marker {
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 35%));
 }
 
 .split-coach-chat {

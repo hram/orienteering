@@ -54,9 +54,12 @@
   let paceChartInstance = null;
   let splitPaceChartInstance = null;
   let paceScrubPointerId = null;
+  let splitPaceScrubPointerId = null;
   let trimHistory = [];
   let trackDirty = false;
   let activeSplitAnalysisRow = null;
+  let splitAnalysisMarker = null;
+  let splitAnalysisSeconds = 0;
   let splitChatHistory = [];
 
   let durationSeconds = calculateDurationSeconds();
@@ -152,6 +155,28 @@
 
   paceChart?.addEventListener("pointerup", finishPaceScrub);
   paceChart?.addEventListener("pointercancel", finishPaceScrub);
+
+  splitPaceChart?.addEventListener("pointerdown", (event) => {
+    if (!splitPaceChartInstance) {
+      return;
+    }
+    event.preventDefault();
+    splitPaceScrubPointerId = event.pointerId;
+    splitPaceChart.setPointerCapture(event.pointerId);
+    splitPaceChart.classList.add("scrubbing");
+    seekToSplitPaceChartPointer(event);
+  });
+
+  splitPaceChart?.addEventListener("pointermove", (event) => {
+    if (splitPaceScrubPointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    seekToSplitPaceChartPointer(event);
+  });
+
+  splitPaceChart?.addEventListener("pointerup", finishSplitPaceScrub);
+  splitPaceChart?.addEventListener("pointercancel", finishSplitPaceScrub);
 
   trimLeftButton?.addEventListener("click", () => {
     trimTrack("left");
@@ -780,6 +805,7 @@
       splitAnalysisTitle.textContent = `Сплит ${row.label}`;
     }
     activeSplitAnalysisRow = row;
+    splitAnalysisSeconds = 0;
     resetSplitChat(row);
     renderSplitAnalysisMap(row);
     drawSplitPaceChart(row);
@@ -795,6 +821,8 @@
     splitAnalysisModal.hidden = true;
     document.body.classList.remove("modal-open");
     activeSplitAnalysisRow = null;
+    splitAnalysisMarker = null;
+    splitAnalysisSeconds = 0;
     destroySplitPaceChart();
   }
 
@@ -931,6 +959,7 @@
     if (mapImage) {
       mapImage.setAttribute("href", await imageElementDataUrl(image));
     }
+    clonedSvg.querySelector(".split-athlete-marker")?.remove();
     const source = new XMLSerializer().serializeToString(clonedSvg);
     const svgBlob = new Blob([source], {type: "image/svg+xml;charset=utf-8"});
     const svgUrl = URL.createObjectURL(svgBlob);
@@ -1043,6 +1072,14 @@
     coursePoints.forEach((control, index) => {
       addAnalysisControlMarker(control, index === 0 ? "from" : index === coursePoints.length - 1 ? "to" : "via");
     });
+    splitAnalysisMarker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    splitAnalysisMarker.setAttribute("class", "split-athlete-marker");
+    splitAnalysisMarker.setAttribute("r", "8");
+    splitAnalysisMarker.setAttribute("fill", "#18a0fb");
+    splitAnalysisMarker.setAttribute("stroke", "#ffffff");
+    splitAnalysisMarker.setAttribute("stroke-width", "4");
+    splitAnalysisSvg.appendChild(splitAnalysisMarker);
+    updateSplitAnalysisAthlete(0);
   }
 
   function drawSplitPaceChart(row) {
@@ -1065,6 +1102,26 @@
       return;
     }
     const paceBounds = calculatePaceBoundsForSeries(series);
+    const splitPlayheadPlugin = {
+      id: "splitPacePlayhead",
+      afterDatasetsDraw(chart) {
+        const xScale = chart.scales.x;
+        const area = chart.chartArea;
+        if (!xScale || !area) {
+          return;
+        }
+        const x = xScale.getPixelForValue(clamp(splitAnalysisSeconds, 0, duration));
+        const context = chart.ctx;
+        context.save();
+        context.strokeStyle = "#b21f5b";
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(x, area.top);
+        context.lineTo(x, area.bottom);
+        context.stroke();
+        context.restore();
+      },
+    };
     splitPaceChartInstance = new window.Chart(splitPaceChart, {
       type: "line",
       data: {
@@ -1127,6 +1184,7 @@
           },
         },
       },
+      plugins: [splitPlayheadPlugin],
     });
   }
 
@@ -1146,6 +1204,56 @@
     }
     const padding = Math.max((max - min) * 0.12, 0.3);
     return {min: Math.max(0, min - padding), max: max + padding};
+  }
+
+  function seekSplitAnalysis(seconds) {
+    if (!activeSplitAnalysisRow) {
+      return;
+    }
+    const duration = Math.max(activeSplitAnalysisRow.splitSeconds || 0, 0);
+    splitAnalysisSeconds = clamp(seconds, 0, duration);
+    updateSplitAnalysisAthlete(splitAnalysisSeconds);
+    if (splitPaceChartInstance) {
+      splitPaceChartInstance.update("none");
+    }
+  }
+
+  function updateSplitAnalysisAthlete(seconds) {
+    if (!activeSplitAnalysisRow || !splitAnalysisMarker) {
+      return;
+    }
+    const segment = splitAnalysisTrackSegment(activeSplitAnalysisRow);
+    if (!segment.length) {
+      return;
+    }
+    const pixel = interpolateTrackSegmentPixel(segment, seconds);
+    splitAnalysisMarker.setAttribute("cx", String(pixel.pixel_x));
+    splitAnalysisMarker.setAttribute("cy", String(pixel.pixel_y));
+  }
+
+  function splitAnalysisTrackSegment(row) {
+    return trackPoints.slice(row.fromTrackIndex, row.toTrackIndex + 1);
+  }
+
+  function interpolateTrackSegmentPixel(segment, seconds) {
+    if (segment.length === 1 || seconds <= 0) {
+      return segment[0].pixel;
+    }
+    const baseSeconds = segment[0].seconds;
+    const absoluteSeconds = baseSeconds + seconds;
+    for (let index = 1; index < segment.length; index += 1) {
+      const previous = segment[index - 1];
+      const current = segment[index];
+      if (current.seconds >= absoluteSeconds) {
+        const span = Math.max(current.seconds - previous.seconds, 0.001);
+        const ratio = clamp((absoluteSeconds - previous.seconds) / span, 0, 1);
+        return {
+          pixel_x: previous.pixel.pixel_x + (current.pixel.pixel_x - previous.pixel.pixel_x) * ratio,
+          pixel_y: previous.pixel.pixel_y + (current.pixel.pixel_y - previous.pixel.pixel_y) * ratio,
+        };
+      }
+    }
+    return segment[segment.length - 1].pixel;
   }
 
   function appendSplitArrowMarker() {
@@ -1359,6 +1467,14 @@
     seekToSeconds(seconds);
   }
 
+  function seekToSplitPaceChartPointer(event) {
+    const seconds = splitPaceChartPointerToSeconds(event);
+    if (seconds === null) {
+      return;
+    }
+    seekSplitAnalysis(seconds);
+  }
+
   function paceChartPointerToSeconds(event) {
     if (!paceChartInstance || !window.Chart) {
       return null;
@@ -1373,8 +1489,30 @@
     return clamp(xScale.getValueForPixel(position.x), 0, durationSeconds);
   }
 
+  function splitPaceChartPointerToSeconds(event) {
+    if (!splitPaceChartInstance || !window.Chart || !activeSplitAnalysisRow) {
+      return null;
+    }
+    const xScale = splitPaceChartInstance.scales.x;
+    if (!xScale) {
+      return null;
+    }
+    const position = window.Chart.helpers?.getRelativePosition
+      ? window.Chart.helpers.getRelativePosition(event, splitPaceChartInstance)
+      : fallbackSplitChartRelativePosition(event);
+    return clamp(xScale.getValueForPixel(position.x), 0, Math.max(activeSplitAnalysisRow.splitSeconds || 0, 0));
+  }
+
   function fallbackChartRelativePosition(event) {
     const rect = paceChart.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+  }
+
+  function fallbackSplitChartRelativePosition(event) {
+    const rect = splitPaceChart.getBoundingClientRect();
     return {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
@@ -1448,6 +1586,15 @@
     paceChart?.releasePointerCapture(event.pointerId);
     paceChart?.classList.remove("scrubbing");
     paceScrubPointerId = null;
+  }
+
+  function finishSplitPaceScrub(event) {
+    if (splitPaceScrubPointerId !== event.pointerId) {
+      return;
+    }
+    splitPaceChart?.releasePointerCapture(event.pointerId);
+    splitPaceChart?.classList.remove("scrubbing");
+    splitPaceScrubPointerId = null;
   }
 
   function clientPointToViewportPoint(clientX, clientY) {

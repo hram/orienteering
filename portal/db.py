@@ -73,6 +73,21 @@ CREATE TABLE IF NOT EXISTS training_import_drafts (
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS race_results (
+    race_result_id TEXT PRIMARY KEY,
+    training_id    TEXT,
+    source_url     TEXT NOT NULL,
+    event_name     TEXT NOT NULL,
+    event_meta     TEXT,
+    group_name     TEXT NOT NULL,
+    group_subtitle TEXT,
+    controls       TEXT NOT NULL,
+    participants   TEXT NOT NULL,
+    self_row_index INTEGER NOT NULL,
+    created_at     TEXT NOT NULL,
+    FOREIGN KEY (training_id) REFERENCES trainings(training_id)
+);
 """
 
 
@@ -138,6 +153,29 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
         await conn.execute("ALTER TABLE trainings ADD COLUMN course_controls TEXT")
     if "track_points" not in training_columns:
         await conn.execute("ALTER TABLE trainings ADD COLUMN track_points TEXT")
+
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS race_results (
+            race_result_id TEXT PRIMARY KEY,
+            training_id    TEXT,
+            source_url     TEXT NOT NULL,
+            event_name     TEXT NOT NULL,
+            event_meta     TEXT,
+            group_name     TEXT NOT NULL,
+            group_subtitle TEXT,
+            controls       TEXT NOT NULL,
+            participants   TEXT NOT NULL,
+            self_row_index INTEGER NOT NULL,
+            created_at     TEXT NOT NULL,
+            FOREIGN KEY (training_id) REFERENCES trainings(training_id)
+        )
+        """
+    )
+    cursor = await conn.execute("PRAGMA table_info(race_results)")
+    race_result_columns = {row["name"] for row in await cursor.fetchall()}
+    if "training_id" not in race_result_columns:
+        await conn.execute("ALTER TABLE race_results ADD COLUMN training_id TEXT")
 
 
 async def create_import_draft(
@@ -256,6 +294,77 @@ async def list_trainings(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
     cursor = await conn.execute("SELECT * FROM trainings ORDER BY date DESC, created_at DESC")
     rows = await cursor.fetchall()
     return [dict(row) for row in rows]
+
+
+async def list_race_results(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
+    cursor = await conn.execute("SELECT * FROM race_results ORDER BY created_at DESC")
+    rows = await cursor.fetchall()
+    results = []
+    for row in rows:
+        result = race_result_from_row(row)
+        result["participant_count"] = len(result["participants"])
+        result["self_participant"] = _self_participant(result)
+        results.append(result)
+    return results
+
+
+async def save_race_result(
+    conn: aiosqlite.Connection,
+    *,
+    training_id: str | None = None,
+    source_url: str,
+    event_name: str,
+    event_meta: str | None,
+    group_name: str,
+    group_subtitle: str | None,
+    controls: list[dict[str, Any]],
+    participants: list[dict[str, Any]],
+    self_row_index: int,
+) -> dict[str, Any]:
+    now = utc_now_iso()
+    race_result_id = uuid4().hex
+    await conn.execute(
+        """
+        INSERT INTO race_results (
+            race_result_id, training_id, source_url, event_name, event_meta,
+            group_name, group_subtitle, controls, participants,
+            self_row_index, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            race_result_id,
+            training_id,
+            source_url,
+            event_name,
+            event_meta,
+            group_name,
+            group_subtitle,
+            serialize_json(controls),
+            serialize_json(participants),
+            self_row_index,
+            now,
+        ),
+    )
+    await conn.commit()
+    result = await get_race_result(conn, race_result_id)
+    if result is None:
+        raise RuntimeError("Race result was not created")
+    return result
+
+
+async def get_race_result(conn: aiosqlite.Connection, race_result_id: str) -> dict[str, Any] | None:
+    cursor = await conn.execute(
+        "SELECT * FROM race_results WHERE race_result_id = ?",
+        (race_result_id,),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        return None
+    result = race_result_from_row(row)
+    result["participant_count"] = len(result["participants"])
+    result["self_participant"] = _self_participant(result)
+    return result
 
 
 async def set_import_draft_map_image(
@@ -567,3 +676,17 @@ def import_draft_from_row(row: aiosqlite.Row) -> dict[str, Any]:
     draft["course_controls"] = deserialize_json(draft.get("course_controls"), [])
     draft["track_points"] = deserialize_json(draft.get("track_points"), [])
     return draft
+
+
+def race_result_from_row(row: aiosqlite.Row) -> dict[str, Any]:
+    result = dict(row)
+    result["controls"] = deserialize_json(result.get("controls"), [])
+    result["participants"] = deserialize_json(result.get("participants"), [])
+    return result
+
+
+def _self_participant(result: dict[str, Any]) -> dict[str, Any] | None:
+    for participant in result["participants"]:
+        if participant.get("row_index") == result.get("self_row_index"):
+            return participant
+    return None

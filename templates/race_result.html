@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ result.group_name }} · Протокол</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  </head>
+  <body>
+    <main
+      id="race-result-workspace"
+      class="shell wide race-result-shell"
+      {% if training %}
+        data-training-id="{{ training.training_id }}"
+        data-transform='{{ training.georef_transform | tojson }}'
+        data-course-controls='{{ training.course_controls | tojson }}'
+        data-track-points='{{ training.track_points | tojson }}'
+        data-map-image-url="{{ training.map_image_url or '' }}"
+      {% endif %}
+    >
+      <header class="topbar">
+        <div>
+          <h1>{{ result.group_name }}</h1>
+          <p>{{ result.event_name }}</p>
+        </div>
+        <div class="actions">
+          <a class="button" href="/race-results">Протоколы</a>
+          {% if result.training_id %}
+            <a class="button" href="/trainings/{{ result.training_id }}/play">Плеер</a>
+          {% endif %}
+          <a class="button" href="/trainings">Тренировки</a>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="race-summary">
+          <div>
+            <strong>Участников</strong>
+            <span>{{ result.participant_count }}</span>
+          </div>
+          <div>
+            <strong>КП</strong>
+            <span>{{ result.controls|length }}</span>
+          </div>
+          <div>
+            <strong>Я</strong>
+            <span>{% if result.self_participant %}{{ result.self_participant.name }}{% else %}не выбрано{% endif %}</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel race-table-panel">
+        <div class="race-table-wrap">
+          <table class="race-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Участник</th>
+                <th>Время</th>
+                {% for control in result.controls %}
+                  <th>{{ control.label }}{% if control.distance_meters %}<br>{{ control.distance_meters }} м{% endif %}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for participant in result.participants %}
+                <tr class="{% if participant.row_index == result.self_row_index %}race-self-row{% endif %}">
+                  <td>{{ participant.place }}</td>
+                  <td class="race-participant-name">
+                    {% set name_parts = participant.name.split(" ", 1) %}
+                    <span>{{ name_parts[0] }}</span>
+                    {% if name_parts|length > 1 %}
+                      <small>{{ name_parts[1] }}</small>
+                    {% endif %}
+                  </td>
+                  <td>{{ participant.display_result }}</td>
+                  {% for split in participant.splits %}
+                    <td class="{% if split.split and split.split.rank == 1 %}race-best-split-cell{% endif %}">
+                      {% if split.cumulative %}<span>{{ split.cumulative.time }}{% if split.cumulative.rank %} ({{ split.cumulative.rank }}){% endif %}</span>{% endif %}
+                      {% if split.split %}<small>{{ split.split.time }}{% if split.split.rank %} ({{ split.split.rank }}){% endif %}</small>{% endif %}
+                      {% if participant.row_index == result.self_row_index and result.training_id %}
+                        <button
+                          class="race-split-analysis-button"
+                          type="button"
+                          data-split-label="{{ split.label }}"
+                          aria-label="Анализ сплита {{ split.label }}"
+                          title="Анализ сплита"
+                        >↗</button>
+                      {% endif %}
+                    </td>
+                  {% endfor %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    {% if training %}
+      <div id="split-analysis-modal" class="split-analysis-modal" hidden>
+        <div class="split-analysis-backdrop" data-close-split-analysis></div>
+        <section class="split-analysis-dialog" role="dialog" aria-modal="true" aria-labelledby="split-analysis-title">
+          <header class="split-analysis-header">
+            <h2 id="split-analysis-title">Сплит</h2>
+            <div class="split-analysis-actions">
+              <button id="split-debug-snapshot" class="button compact" type="button">PNG для AI</button>
+              <button id="split-analysis-close" class="split-analysis-close" type="button" aria-label="Закрыть">
+                <span aria-hidden="true">×</span>
+              </button>
+            </div>
+          </header>
+          <div class="split-analysis-body">
+            <div class="split-analysis-visuals">
+              <div class="split-analysis-map">
+                <svg id="split-analysis-svg" class="split-analysis-svg" role="img" aria-label="Карта сплита"></svg>
+              </div>
+              <div class="split-pace-panel">
+                <div class="split-pace-header">
+                  <h3>Темп на сплите</h3>
+                  <span id="split-pace-status" class="muted">--:-- мин/км</span>
+                </div>
+                <div class="split-pace-chart-frame">
+                  <canvas id="split-pace-chart" class="split-pace-chart"></canvas>
+                </div>
+              </div>
+            </div>
+            <aside class="split-coach-chat" aria-label="Чат с тренером">
+              <div id="split-chat-messages" class="split-chat-messages"></div>
+              <div id="split-chat-start" class="split-chat-start">
+                <button id="split-chat-start-button" class="button primary" type="button">Начать диалог</button>
+              </div>
+              <form id="split-chat-form" class="split-chat-form" hidden>
+                <input id="split-chat-input" type="text" autocomplete="off" placeholder="Спроси тренера про этот сплит">
+                <button id="split-chat-submit" class="button primary compact" type="submit">Отправить</button>
+              </form>
+            </aside>
+          </div>
+        </section>
+      </div>
+      <img id="race-analysis-map-image" src="{{ training.map_image_url }}" alt="" hidden>
+      <script src="/static/splits.js"></script>
+      <script src="/static/race_result.js"></script>
+    {% endif %}
+  </body>
+</html>

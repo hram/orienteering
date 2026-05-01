@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Протоколы</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Протоколы</h1>
+          <p>Сохранённые результаты соревнований.</p>
+        </div>
+        <div class="actions">
+          <a class="button" href="/trainings">Тренировки</a>
+          <a class="button primary" href="/race-results/import">Импорт</a>
+        </div>
+      </header>
+
+      <section class="panel">
+        {% if results %}
+          <div class="training-list">
+            {% for result in results %}
+              <article class="training-row">
+                <div>
+                  <strong>{{ result.event_name }}</strong>
+                  <span>
+                    {{ result.group_name }}
+                    · {{ result.participant_count }} участников
+                    {% if result.self_participant %} · Я: {{ result.self_participant.name }}{% endif %}
+                  </span>
+                </div>
+                <a class="button compact" href="/race-results/{{ result.race_result_id }}">Открыть</a>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="muted">Пока нет сохранённых протоколов.</p>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

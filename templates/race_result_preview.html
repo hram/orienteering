@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Выбор группы</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Выбор группы</h1>
+          <p>
+            {{ protocol.event_name }}
+            {% if training %} · {{ training.title }}{% endif %}
+          </p>
+        </div>
+        <a class="button" href="{% if training %}/trainings/{{ training.training_id }}/race-result/import{% else %}/race-results/import{% endif %}">Другой URL</a>
+      </header>
+
+      <section class="race-group-grid">
+        {% for group in protocol.groups %}
+          <article class="panel race-group-card">
+            <div class="race-group-card-header">
+              <div>
+                <h2>{{ group.name }}</h2>
+                {% if group.subtitle %}<p class="muted">{{ group.subtitle }}</p>{% endif %}
+              </div>
+              <span class="muted">{{ group.participants|length }} участников · {{ group.controls|length }} КП</span>
+            </div>
+            <form class="form-stack" action="{% if training %}/trainings/{{ training.training_id }}/race-result/import/save{% else %}/race-results/import/save{% endif %}" method="post">
+              <input type="hidden" name="url" value="{{ url }}">
+              <input type="hidden" name="group_name" value="{{ group.name }}">
+              <label>
+                Кто я в этой группе
+                <select name="self_row_index" required>
+                  {% for participant in group.participants %}
+                    <option value="{{ participant.row_index }}" {% if group.name == "Ж14" and participant.name == "Храмова Полина" %}selected{% endif %}>
+                      {{ participant.name }}{% if participant.bib %} · №{{ participant.bib }}{% endif %}{% if participant.result %} · {{ participant.result }}{% endif %}
+                    </option>
+                  {% endfor %}
+                </select>
+              </label>
+              <div class="race-group-sample">
+                {% for control in group.controls[:5] %}
+                  <span>{{ control.label }}{% if control.distance_meters %} · {{ control.distance_meters }} м{% endif %}</span>
+                {% endfor %}
+                {% if group.controls|length > 5 %}
+                  <span>…</span>
+                {% endif %}
+              </div>
+              <div class="actions">
+                <button class="button primary compact" type="submit">Сохранить эту группу</button>
+              </div>
+            </form>
+          </article>
+        {% endfor %}
+      </section>
+    </main>
+  </body>
+</html>
