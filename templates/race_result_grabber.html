@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Грабер протоколов</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Грабер протоколов</h1>
+          <p>Поиск участников по календарю соревнований O-Site.</p>
+        </div>
+        <div class="actions">
+          <a class="button" href="/race-results">Протоколы</a>
+          <a class="button" href="/trainings">Тренировки</a>
+        </div>
+      </header>
+
+      <section class="panel">
+        <form class="form-stack" method="post" action="/race-results/grabber" id="race-grabber-form">
+          <label>
+            Фамилия или часть имени
+            <input name="participant_query" type="text" value="{{ participant_query or '' }}" placeholder="Храмова" required>
+          </label>
+          <label class="race-problem-toggle">
+            <input name="include_archive" type="checkbox" value="1" {% if include_archive %}checked{% endif %}>
+            <span>Архив за последние 3 года</span>
+          </label>
+          <p class="muted" id="race-grabber-hint">Поиск по календарю может занять до нескольких минут, особенно с архивом.</p>
+          <div class="actions">
+            <button class="button primary" type="submit" id="race-grabber-submit">Искать</button>
+          </div>
+        </form>
+      </section>
+
+      {% if search %}
+        <section class="panel">
+          <div class="race-summary">
+            <div>
+              <strong>Запрос</strong>
+              <span>{{ search.query }}</span>
+            </div>
+            <div>
+              <strong>Страниц</strong>
+              <span>{{ search.calendar_page_count }}</span>
+            </div>
+            <div>
+              <strong>Стартов</strong>
+              <span>{{ search.race_page_count }}</span>
+            </div>
+            <div>
+              <strong>Сплитов</strong>
+              <span>{{ search.split_page_count }}</span>
+            </div>
+            <div>
+              <strong>Совпадений</strong>
+              <span>{{ search.matches|length }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          {% if search.matches %}
+            <div class="training-list">
+              {% for match in search.matches %}
+                <article class="training-row">
+                  <div>
+                    <strong>{{ match.event_name }}</strong>
+                    <span>{{ match.group_name }} · {{ match.split_label }} · {{ match.participant_name }}</span>
+                  </div>
+                  <div class="training-actions">
+                    {% if match.imported %}
+                      <button class="button compact" type="button" disabled>Импортировано</button>
+                    {% else %}
+                      <a
+                        class="button compact primary"
+                        href="{{ match.import_url }}"
+                        target="_blank"
+                        rel="noreferrer"
+                      >Импорт</a>
+                    {% endif %}
+                  </div>
+                </article>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="muted">Совпадений не найдено.</p>
+          {% endif %}
+        </section>
+      {% endif %}
+    </main>
+    <script>
+      (function () {
+        const form = document.querySelector("#race-grabber-form");
+        const submitButton = document.querySelector("#race-grabber-submit");
+        const hint = document.querySelector("#race-grabber-hint");
+        if (!form || !submitButton || !hint) {
+          return;
+        }
+        form.addEventListener("submit", () => {
+          submitButton.disabled = true;
+          submitButton.textContent = "Ищу...";
+          hint.textContent = "Поиск запущен. Страница обновится, когда обход календаря завершится.";
+        });
+      })();
+    </script>
+  </body>
+</html>

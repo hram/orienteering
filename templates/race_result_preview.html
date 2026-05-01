@@ -36,7 +36,7 @@
                 Кто я в этой группе
                 <select name="self_row_index" required>
                   {% for participant in group.participants %}
-                    <option value="{{ participant.row_index }}" {% if group.name == "Ж14" and participant.name == "Храмова Полина" %}selected{% endif %}>
+                    <option value="{{ participant.row_index }}" {% if group.name == selected_group_name and participant.name == selected_participant_name %}selected{% endif %}>
                       {{ participant.name }}{% if participant.bib %} · №{{ participant.bib }}{% endif %}{% if participant.result %} · {{ participant.result }}{% endif %}
                     </option>
                   {% endfor %}

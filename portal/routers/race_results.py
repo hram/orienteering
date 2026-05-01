@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from portal.services import race_grabber
 from portal.db import (
     connect_db,
     delete_race_result,
@@ -34,6 +36,60 @@ async def race_results_page(request: Request) -> HTMLResponse:
     finally:
         await conn.close()
     return templates.TemplateResponse(request, "race_results.html", {"results": results})
+
+
+@router.get("/race-results/grabber", response_class=HTMLResponse)
+async def race_result_grabber_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "race_result_grabber.html",
+        {"participant_query": "", "include_archive": False, "search": None},
+    )
+
+
+@router.post("/race-results/grabber", response_class=HTMLResponse)
+async def race_result_grabber_search(
+    request: Request,
+    participant_query: str = Form(...),
+    include_archive: str | None = Form(None),
+) -> HTMLResponse:
+    include_archive_flag = include_archive == "1"
+    search = await asyncio.to_thread(
+        race_grabber.find_participant_races,
+        participant_query,
+        include_archive_flag,
+    )
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        imported_results = await list_race_results(conn)
+    finally:
+        await conn.close()
+    _annotate_grabber_matches(search, imported_results)
+    return templates.TemplateResponse(
+        request,
+        "race_result_grabber.html",
+        {
+            "participant_query": participant_query,
+            "include_archive": include_archive_flag,
+            "search": search,
+        },
+    )
+
+
+@router.get("/race-results/import/open", response_class=HTMLResponse)
+async def race_result_import_open(
+    request: Request,
+    url: str,
+    group_name: str,
+    participant_name: str,
+) -> HTMLResponse:
+    return await _race_result_import_preview(
+        request,
+        url=url,
+        training_id=None,
+        selected_group_name=group_name,
+        selected_participant_name=participant_name,
+    )
 
 
 @router.get("/race-results/import", response_class=HTMLResponse)
@@ -75,6 +131,8 @@ async def _race_result_import_preview(
     *,
     url: str,
     training_id: str | None,
+    selected_group_name: str | None = None,
+    selected_participant_name: str | None = None,
 ) -> HTMLResponse:
     training = await _get_training_or_404(training_id) if training_id else None
     try:
@@ -86,10 +144,26 @@ async def _race_result_import_preview(
             {"url": url, "error": str(error), "training": training},
             status_code=400,
         )
+    protocol_groups = protocol.groups
+    if selected_group_name:
+        selected_groups = [group for group in protocol.groups if group.get("name") == selected_group_name]
+        if selected_groups:
+            protocol_groups = selected_groups
+    protocol_view = type(protocol)(
+        event_name=protocol.event_name,
+        event_meta=protocol.event_meta,
+        groups=protocol_groups,
+    )
     return templates.TemplateResponse(
         request,
         "race_result_preview.html",
-        {"url": url, "protocol": protocol, "training": training},
+        {
+            "url": url,
+            "protocol": protocol_view,
+            "training": training,
+            "selected_group_name": selected_group_name,
+            "selected_participant_name": selected_participant_name,
+        },
     )
 
 
@@ -218,6 +292,28 @@ def _compact_time(value: str | None) -> str:
     if len(parts) == 3 and parts[0] == "00":
         return f"{parts[1]}:{parts[2]}"
     return value
+
+
+def _annotate_grabber_matches(search: dict, imported_results: list[dict]) -> None:
+    imported_keys = {
+        (
+            race_grabber.build_report_id(result.get("source_url", "")),
+            (result.get("self_participant") or {}).get("name", "").casefold(),
+        )
+        for result in imported_results
+    }
+    for match in search.get("matches", []):
+        match["imported"] = (
+            match.get("report_id", ""),
+            match.get("participant_name", "").casefold(),
+        ) in imported_keys
+        match["import_url"] = "/race-results/import/open?" + urlencode(
+            {
+                "url": match.get("split_url", ""),
+                "group_name": match.get("group_name", ""),
+                "participant_name": match.get("participant_name", ""),
+            }
+        )
 
 
 def _prepare_race_result_view(result: dict) -> None:

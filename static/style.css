@@ -182,7 +182,7 @@ textarea {
   padding: 12px;
 }
 
-.training-row span {
+.training-row > div:first-child > span {
   display: block;
   margin-top: 4px;
   color: #66747c;
@@ -413,12 +413,13 @@ textarea {
 }
 
 .play-button span {
+  display: block;
   width: 0;
   height: 0;
-  margin-left: 3px;
   border-top: 8px solid transparent;
   border-bottom: 8px solid transparent;
   border-left: 12px solid #ffffff;
+  transform: translateX(2px);
 }
 
 .import-summary {
