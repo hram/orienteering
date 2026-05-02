@@ -371,6 +371,7 @@ def _prepare_race_result_view(result: dict) -> None:
     result["problem_split_indexes"] = sorted(problem_indexes)
     result["virtual_leader"] = _virtual_leader_participant(participants, leader_split_by_split, controls)
     result["self_problem_total_gap"] = _self_problem_total_gap(self_participant, leader_split_by_split, problem_indexes)
+    result["reachability_chart"] = _reachability_chart_view(result, self_participant)
     if self_participant:
         for split_index, split in enumerate(self_participant.get("splits", [])):
             split_time = _split_stage_time(split, split_index)
@@ -602,6 +603,69 @@ def _result_seconds(value: str | None) -> int | None:
     if len(numbers) == 1:
         return numbers[0]
     return None
+
+
+def _gap_seconds(value: str | None) -> int | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return 0
+    sign = 1
+    if text.startswith("-"):
+        sign = -1
+        text = text[1:].strip()
+    elif text.startswith("+"):
+        text = text[1:].strip()
+    seconds = _result_seconds(text)
+    if seconds is None:
+        return None
+    return sign * seconds
+
+
+def _place_number(value: str | None, fallback: int) -> int:
+    if value and value.isdigit():
+        return int(value)
+    return fallback
+
+
+def _reachability_chart_view(result: dict, self_participant: dict | None) -> dict:
+    if not self_participant:
+        return {}
+
+    participants = result.get("participants", [])
+    self_place_number = _place_number(self_participant.get("place"), self_participant.get("row_index", 0) + 1)
+    self_gap_seconds = _gap_seconds(self_participant.get("gap"))
+    if self_gap_seconds is None:
+        self_gap_seconds = 0
+
+    points = []
+    for participant in participants:
+        gap_seconds = _gap_seconds(participant.get("gap"))
+        if gap_seconds is None:
+            continue
+        place_number = _place_number(participant.get("place"), participant.get("row_index", 0) + 1)
+        if place_number > self_place_number:
+            continue
+        points.append(
+            {
+                "place": place_number,
+                "name": participant.get("name", ""),
+                "gap_seconds": gap_seconds,
+                "x_seconds": self_gap_seconds - gap_seconds,
+                "is_self": participant.get("row_index") == self_participant.get("row_index"),
+            }
+        )
+
+    if len(points) < 2:
+        return {}
+
+    return {
+        "self_name": self_participant.get("name", ""),
+        "self_place": self_place_number,
+        "self_gap_seconds": self_gap_seconds,
+        "points": points,
+    }
 
 
 def _training_view_model(training: dict) -> dict:

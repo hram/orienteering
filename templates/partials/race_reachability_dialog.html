@@ -1,0 +1,28 @@
+<div id="reachability-modal" class="reachability-modal" hidden>
+  <div class="reachability-backdrop" data-close-reachability></div>
+  <section class="reachability-dialog" role="dialog" aria-modal="true" aria-labelledby="reachability-title">
+    <header class="reachability-header">
+      <div>
+        <h2 id="reachability-title">Анализ достижимости</h2>
+        <p id="reachability-subtitle" class="muted"></p>
+      </div>
+      <button id="reachability-close" class="icon-button" type="button" aria-label="Закрыть">
+        <span aria-hidden="true">×</span>
+      </button>
+    </header>
+    <div class="reachability-body">
+      <div class="reachability-chart-panel">
+        <div class="reachability-chart-header">
+          <h3>Сколько нужно сэкономить</h3>
+          <span id="reachability-chart-status" class="muted"></span>
+        </div>
+        <div class="reachability-chart-frame">
+          <canvas id="reachability-chart" class="reachability-chart" role="img" aria-label="График достижимости"></canvas>
+        </div>
+      </div>
+      <aside class="reachability-sidebar" aria-label="Зоны достижимости">
+        <div id="reachability-zones" class="reachability-zones"></div>
+      </aside>
+    </div>
+  </section>
+</div>

@@ -202,6 +202,30 @@ def test_prepare_race_result_view_marks_relative_place_gaps() -> None:
     assert result["participants"][2]["relative_gap_tone"] == "good"
 
 
+def test_prepare_race_result_view_builds_reachability_chart() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "self_row_index": 1,
+        "participants": [
+            {"row_index": 0, "place": "1", "name": "Лидер", "result": "00:10:00", "gap": "+00:30", "splits": []},
+            {"row_index": 1, "place": "19", "name": "Я", "result": "00:10:30", "gap": "+01:10", "splits": []},
+            {"row_index": 2, "place": "20", "name": "Ниже", "result": "00:11:20", "gap": "+02:00", "splits": []},
+        ],
+    }
+
+    _prepare_race_result_view(result)
+
+    chart = result["reachability_chart"]
+    assert chart["self_name"] == "Я"
+    assert chart["self_place"] == 19
+    assert chart["self_gap_seconds"] == 70
+    assert len(chart["points"]) == 2
+    assert chart["points"][0]["x_seconds"] == 40
+    assert chart["points"][1]["is_self"] is True
+    assert all(point["place"] <= 19 for point in chart["points"])
+
+
 def test_race_protocol_import_flow(monkeypatch) -> None:
     from portal.routers import race_results
 
@@ -270,6 +294,9 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert "split_analysis_dialog.js" in detail.text
     assert "split_view_dialog.js" in detail.text
     assert "race_result.js" in detail.text
+    assert "Анализ достижимости" in detail.text
+    assert "reachability-modal" in detail.text
+    assert "race_reachability_dialog.js" in detail.text
     assert 'data-split-label="1"' in detail.text
     assert "race-split-analysis-button" in detail.text
     assert "Просмотр" in detail.text

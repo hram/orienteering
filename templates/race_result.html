@@ -11,6 +11,7 @@
     <main
       id="race-result-workspace"
       class="shell wide race-result-shell"
+      data-reachability-chart='{{ result.reachability_chart | tojson }}'
       {% if training %}
         data-training-id="{{ training.training_id }}"
         data-transform='{{ training.georef_transform | tojson }}'
@@ -47,6 +48,11 @@
             <strong>Я</strong>
             <span>{% if result.self_participant %}{{ result.self_participant.name }}{% else %}не выбрано{% endif %}</span>
           </div>
+          {% if result.reachability_chart and result.reachability_chart.points %}
+            <div class="race-summary-action">
+              <button class="button compact" type="button" id="open-reachability-btn">Анализ достижимости</button>
+            </div>
+          {% endif %}
           {% if result.problem_split_indexes %}
             <div class="race-summary-toggle">
               <label class="race-problem-toggle">
@@ -221,6 +227,10 @@
         <script src="/static/split_view_dialog.js"></script>
       {% endif %}
       <script src="/static/race_result.js"></script>
+    {% endif %}
+    {% if result.reachability_chart and result.reachability_chart.points %}
+      {% include "partials/race_reachability_dialog.html" %}
+      <script src="/static/race_reachability_dialog.js"></script>
     {% endif %}
   </body>
 </html>
