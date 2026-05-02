@@ -181,6 +181,27 @@ def test_prepare_race_result_view_uses_first_cumulative_as_split_for_virtual_lea
     assert result["participants"][0]["splits"][0]["leader_gap_text"] == "+00:30"
 
 
+def test_prepare_race_result_view_marks_relative_place_gaps() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "self_row_index": 1,
+        "participants": [
+            {"row_index": 0, "result": "00:10:00", "splits": []},
+            {"row_index": 1, "result": "00:10:10", "splits": []},
+            {"row_index": 2, "result": "00:10:40", "splits": []},
+        ],
+    }
+
+    _prepare_race_result_view(result)
+
+    assert result["participants"][0]["relative_gap_text"] == "+00:10"
+    assert result["participants"][0]["relative_gap_tone"] == "hot"
+    assert result["participants"][1]["relative_gap_text"] == ""
+    assert result["participants"][2]["relative_gap_text"] == "-00:30"
+    assert result["participants"][2]["relative_gap_tone"] == "good"
+
+
 def test_race_protocol_import_flow(monkeypatch) -> None:
     from portal.routers import race_results
 
@@ -209,7 +230,11 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
         )
         client.post(f"/trainings/imports/{draft_id}/finish", follow_redirects=False)
         trainings = client.get("/trainings")
-        match = re.search(r"/trainings/([0-9a-f]+)/race-result/import", trainings.text)
+        match = re.search(
+            r"Race with protocol.*?/trainings/([0-9a-f]+)/race-result/import",
+            trainings.text,
+            re.S,
+        )
         assert match is not None
         training_id = match.group(1)
         assert f"/trainings/{training_id}/race-result/import" in trainings.text
@@ -241,10 +266,13 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert "race-self-row" in detail.text
     assert f"/trainings/{training_id}/play" in detail.text
     assert "split-analysis-modal" in detail.text
+    assert "split-view-modal" in detail.text
     assert "split_analysis_dialog.js" in detail.text
+    assert "split_view_dialog.js" in detail.text
     assert "race_result.js" in detail.text
     assert 'data-split-label="1"' in detail.text
     assert "race-split-analysis-button" in detail.text
+    assert "Просмотр" in detail.text
     assert "race-split-gap-hot" in detail.text
     assert "race-split-gap-warm" in detail.text
     assert "race-split-gap-good" in detail.text
@@ -291,6 +319,72 @@ def test_race_result_can_be_deleted_from_listing(monkeypatch) -> None:
     assert delete_response.headers["location"] == "/race-results"
     assert f"/race-results/{race_result_id}" not in listing_after.text
     assert detail_after.status_code == 404
+
+
+def test_training_can_attach_previously_imported_race_result(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: SAMPLE_PROTOCOL)
+
+    with TestClient(app) as client:
+        imported = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://example.test/splits.html",
+                "group_name": "Ж14",
+                "self_row_index": "0",
+            },
+            follow_redirects=False,
+        )
+        race_result_id = imported.headers["location"].split("/")[-1]
+
+        create_response = client.post(
+            "/trainings/imports",
+            data={"title": "Attach protocol", "date": "2026-04-26"},
+            follow_redirects=False,
+        )
+        draft_id = create_response.headers["location"].split("/")[3]
+        client.post(
+            f"/api/imports/{draft_id}/map-image",
+            files={"file": ("map.png", b"fake-map", "image/png")},
+        )
+        client.post(
+            f"/api/imports/{draft_id}/georef",
+            json={
+                "control_points": [
+                    {"pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"pixel_x": 1000, "pixel_y": 0, "lat": 60.0, "lon": 30.01},
+                    {"pixel_x": 0, "pixel_y": 1000, "lat": 59.99, "lon": 30.0},
+                ]
+            },
+        )
+        client.post(f"/trainings/imports/{draft_id}/finish", follow_redirects=False)
+        trainings = client.get("/trainings")
+        training_match = re.search(r"/trainings/([0-9a-f]+)/race-result/import", trainings.text)
+        assert training_match is not None
+        training_id = training_match.group(1)
+
+        import_page = client.get(f"/trainings/{training_id}/race-result/import")
+        attach = client.post(
+            f"/trainings/{training_id}/race-result/attach",
+            data={"race_result_id": race_result_id},
+            follow_redirects=False,
+        )
+        detail = client.get(f"/race-results/{race_result_id}")
+        trainings_after_attach = client.get("/trainings")
+
+    assert imported.status_code == 303
+    assert import_page.status_code == 200
+    assert "Ранее импортированные протоколы" in import_page.text
+    assert "Тестовый старт" in import_page.text
+    assert "Храмова Полина" in import_page.text
+    assert "Привязать" in import_page.text
+    assert attach.status_code == 303
+    assert attach.headers["location"] == f"/race-results/{race_result_id}"
+    assert detail.status_code == 200
+    assert f"/trainings/{training_id}/play" in detail.text
+    assert f'/race-results/{race_result_id}' in trainings_after_attach.text
+    assert f"/trainings/{training_id}/race-result/import" not in trainings_after_attach.text
 
 
 def test_legacy_race_protocol_import_flow(monkeypatch) -> None:

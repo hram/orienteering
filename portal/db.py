@@ -322,6 +322,29 @@ async def list_race_results(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
     return results
 
 
+async def list_attachable_race_results(
+    conn: aiosqlite.Connection,
+    training_id: str,
+) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        """
+        SELECT *
+        FROM race_results
+        WHERE training_id IS NULL OR training_id = ?
+        ORDER BY created_at DESC
+        """,
+        (training_id,),
+    )
+    rows = await cursor.fetchall()
+    results = []
+    for row in rows:
+        result = race_result_from_row(row)
+        result["participant_count"] = len(result["participants"])
+        result["self_participant"] = _self_participant(result)
+        results.append(result)
+    return results
+
+
 async def save_race_result(
     conn: aiosqlite.Connection,
     *,
@@ -408,6 +431,25 @@ async def delete_race_result(conn: aiosqlite.Connection, race_result_id: str) ->
     )
     await conn.commit()
     return cursor.rowcount > 0
+
+
+async def attach_race_result_to_training(
+    conn: aiosqlite.Connection,
+    *,
+    race_result_id: str,
+    training_id: str,
+) -> dict[str, Any] | None:
+    await conn.execute(
+        """
+        UPDATE race_results
+        SET training_id = ?
+        WHERE race_result_id = ?
+          AND (training_id IS NULL OR training_id = ?)
+        """,
+        (training_id, race_result_id, training_id),
+    )
+    await conn.commit()
+    return await get_race_result(conn, race_result_id)
 
 
 async def set_import_draft_map_image(
@@ -497,6 +539,25 @@ async def set_import_draft_track(
         WHERE draft_id = ?
         """,
         (gpx_path, filename, serialize_json(track_points), utc_now_iso(), draft_id),
+    )
+    await conn.commit()
+    return await get_import_draft(conn, draft_id)
+
+
+async def clear_import_draft_track(
+    conn: aiosqlite.Connection,
+    draft_id: str,
+) -> dict[str, Any] | None:
+    await conn.execute(
+        """
+        UPDATE training_import_drafts
+        SET track_gpx_path = NULL,
+            track_gpx_filename = NULL,
+            track_points = ?,
+            updated_at = ?
+        WHERE draft_id = ?
+        """,
+        (serialize_json([]), utc_now_iso(), draft_id),
     )
     await conn.commit()
     return await get_import_draft(conn, draft_id)

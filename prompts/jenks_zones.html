@@ -1,0 +1,214 @@
+
+<div style="padding: 1rem 0;">
+  <div style="position: relative; width: 100%; height: 420px;">
+    <canvas id="gapChart" role="img" aria-label="График с зонами по алгоритму Jenks Natural Breaks.">
+      Полина 18 место. Jenks автоматически находит границы групп.
+    </canvas>
+  </div>
+
+  <div id="zones-legend" style="margin-top: 1.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;"></div>
+
+  <div style="margin-top: 1rem; font-size: 12px; color: var(--color-text-secondary);" id="breaks-info"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const polina_gap = 181;
+const data = [
+  {place: 1,  gap: 0,   name: 'Мусатова'},
+  {place: 2,  gap: 15,  name: 'Гонт'},
+  {place: 3,  gap: 18,  name: 'Новокшенова'},
+  {place: 4,  gap: 27,  name: 'Марченко'},
+  {place: 5,  gap: 42,  name: 'Фрумусаки'},
+  {place: 6,  gap: 46,  name: 'Аминина'},
+  {place: 7,  gap: 62,  name: 'Бровина'},
+  {place: 8,  gap: 99,  name: 'Базиль'},
+  {place: 9,  gap: 113, name: 'Яковлева'},
+  {place: 10, gap: 121, name: 'Юрова'},
+  {place: 11, gap: 124, name: 'Лагутина'},
+  {place: 12, gap: 128, name: 'Соловьева'},
+  {place: 13, gap: 146, name: 'Титова'},
+  {place: 14, gap: 150, name: 'Протопопова'},
+  {place: 15, gap: 151, name: 'Черкасова'},
+  {place: 16, gap: 167, name: 'Карпова'},
+  {place: 17, gap: 173, name: 'Волошина'},
+  {place: 18, gap: 181, name: 'Полина'},
+];
+
+function jenks(values, numClasses) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  const mat1 = Array.from({length: n + 1}, () => new Array(numClasses + 1).fill(0));
+  const mat2 = Array.from({length: n + 1}, () => new Array(numClasses + 1).fill(Infinity));
+  for (let i = 1; i <= numClasses; i++) { mat1[1][i] = 1; mat2[1][i] = 0; }
+  for (let j = 2; j <= n; j++) mat2[j][1] = Infinity;
+
+  for (let j = 2; j <= n; j++) {
+    let ssd = 0, sum = 0, sumSq = 0, w = 0;
+    for (let m = 1; m <= j; m++) {
+      const i3 = j - m + 1;
+      const val = sorted[i3 - 1];
+      w++; sum += val; sumSq += val * val;
+      ssd = sumSq - (sum * sum) / w;
+      for (let k = 2; k <= numClasses; k++) {
+        if (mat2[j][k] >= ssd + mat2[i3 - 1][k - 1]) {
+          mat1[j][k] = i3;
+          mat2[j][k] = ssd + mat2[i3 - 1][k - 1];
+        }
+      }
+    }
+    mat1[j][1] = 1;
+    mat2[j][1] = ssd;
+  }
+
+  const breaks = new Array(numClasses + 1);
+  breaks[numClasses] = sorted[n - 1];
+  breaks[0] = sorted[0];
+  let k = n;
+  for (let j = numClasses; j >= 2; j--) {
+    const id = mat1[k][j] - 2;
+    breaks[j - 1] = sorted[id];
+    k = mat1[k][j] - 1;
+  }
+  return breaks;
+}
+
+const gaps = data.map(d => polina_gap - d.gap);
+const breaks = jenks(gaps, 4);
+
+const zoneColors = [
+  {fill: 'rgba(99,153,34,0.11)',  border: '#639922', label: 'Сейчас реально'},
+  {fill: 'rgba(55,138,221,0.10)', border: '#378ADD', label: 'Работа над техникой'},
+  {fill: 'rgba(186,117,23,0.10)', border: '#BA7517', label: 'Серьёзная работа'},
+  {fill: 'rgba(224,75,74,0.09)',  border: '#E24B4A', label: 'Другой уровень'},
+];
+
+function getZoneIndex(x) {
+  for (let i = 0; i < breaks.length - 1; i++) {
+    if (x >= breaks[i] && x <= breaks[i + 1]) return i;
+  }
+  return zoneColors.length - 1;
+}
+
+const zonesPlugin = {
+  id: 'zones',
+  beforeDraw(chart) {
+    const {ctx, chartArea, scales} = chart;
+    if (!chartArea) return;
+    for (let i = 0; i < breaks.length - 1; i++) {
+      const x1 = scales.x.getPixelForValue(breaks[i]);
+      const x2 = scales.x.getPixelForValue(breaks[i + 1]);
+      ctx.save();
+      ctx.fillStyle = zoneColors[i].fill;
+      ctx.fillRect(x1, chartArea.top, x2 - x1, chartArea.bottom - chartArea.top);
+      ctx.restore();
+      ctx.save();
+      ctx.strokeStyle = zoneColors[i].border;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x2, chartArea.top);
+      ctx.lineTo(x2, chartArea.bottom);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+};
+
+new Chart(document.getElementById('gapChart'), {
+  type: 'scatter',
+  plugins: [zonesPlugin],
+  data: {
+    datasets: [
+      {
+        label: 'Участницы',
+        data: data.filter(d => d.name !== 'Полина').map(d => ({
+          x: polina_gap - d.gap, y: d.place, name: d.name,
+        })),
+        backgroundColor: '#378ADD',
+        pointRadius: 6,
+        pointHoverRadius: 8,
+        pointStyle: 'circle',
+      },
+      {
+        label: 'Полина',
+        data: [{x: 0, y: 18, name: 'Полина'}],
+        backgroundColor: '#E24B4A',
+        borderColor: '#ffffff',
+        borderWidth: 2,
+        pointRadius: 10,
+        pointHoverRadius: 12,
+        pointStyle: 'circle',
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label(ctx) {
+            const sec = Math.round(ctx.parsed.x);
+            const place = Math.round(ctx.parsed.y);
+            const name = ctx.raw.name;
+            if (sec === 0) return `${name} — место ${place} (я)`;
+            const m = Math.floor(sec / 60);
+            const s = sec % 60;
+            const t = m > 0 ? `${m}:${String(s).padStart(2,'0')}` : `${s} сек`;
+            return `${name} — место ${place}, нужно −${t}`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        title: { display: true, text: 'нужно сэкономить →', color: '#888' },
+        min: -5,
+        max: 190,
+        ticks: {
+          callback(v) {
+            if (v <= 0) return 'Я';
+            const m = Math.floor(v / 60);
+            const s = v % 60;
+            return m > 0 ? `${m}:${String(s).padStart(2,'0')}` : `${s}с`;
+          },
+          maxTicksLimit: 10,
+        },
+        grid: { color: 'rgba(102,116,124,0.10)' }
+      },
+      y: {
+        title: { display: true, text: 'Место', color: '#888' },
+        min: 0, max: 19,
+        reverse: false,
+        ticks: { stepSize: 1 },
+        grid: { color: 'rgba(102,116,124,0.10)' }
+      }
+    }
+  }
+});
+
+const legend = document.getElementById('zones-legend');
+const info = document.getElementById('breaks-info');
+
+for (let i = 0; i < zoneColors.length; i++) {
+  const from = Math.round(breaks[i]);
+  const to = Math.round(breaks[i + 1]);
+  const inZone = data.filter(d => {
+    const x = polina_gap - d.gap;
+    return x >= breaks[i] && x <= breaks[i + 1] && d.name !== 'Полина';
+  });
+  const places = inZone.map(d => d.place);
+  const placeLabel = places.length ? `Места ${Math.min(...places)}–${Math.max(...places)}` : '';
+  const fmtSec = s => { const m = Math.floor(s/60), r = s%60; return m > 0 ? `${m}:${String(r).padStart(2,'0')}` : `${s} сек`; };
+
+  const card = document.createElement('div');
+  card.style.cssText = `border-left: 3px solid ${zoneColors[i].border}; padding: 8px 12px; background: var(--color-background-secondary); border-radius: 0 var(--border-radius-md) var(--border-radius-md) 0;`;
+  card.innerHTML = `<div style="font-size:11px;color:var(--color-text-secondary)">${zoneColors[i].label}</div><div style="font-weight:500;font-size:15px">${placeLabel}</div><div style="font-size:11px;color:var(--color-text-secondary)">${fmtSec(from)} – ${fmtSec(to)}</div>`;
+  legend.appendChild(card);
+}
+
+info.textContent = `Jenks breaks: ${breaks.map(b => Math.round(b) + 'с').join(' | ')}`;
+</script>

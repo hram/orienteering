@@ -10,11 +10,13 @@ from fastapi.templating import Jinja2Templates
 
 from portal.services import race_grabber
 from portal.db import (
+    attach_race_result_to_training,
     connect_db,
     delete_race_result,
     get_race_result,
     get_training,
     get_training_player,
+    list_attachable_race_results,
     list_race_results,
     normalize_db_path,
     save_race_result,
@@ -104,10 +106,11 @@ async def race_result_import_page(request: Request) -> HTMLResponse:
 @router.get("/trainings/{training_id}/race-result/import", response_class=HTMLResponse)
 async def training_race_result_import_page(training_id: str, request: Request) -> HTMLResponse:
     training = await _get_training_or_404(training_id)
+    existing_results = await _list_attachable_results(training_id)
     return templates.TemplateResponse(
         request,
         "race_result_import.html",
-        {"url": "", "error": None, "training": training},
+        {"url": "", "error": None, "training": training, "existing_results": existing_results},
     )
 
 
@@ -138,10 +141,16 @@ async def _race_result_import_preview(
     try:
         protocol = await _load_protocol(url)
     except Exception as error:
+        existing_results = await _list_attachable_results(training_id)
         return templates.TemplateResponse(
             request,
             "race_result_import.html",
-            {"url": url, "error": str(error), "training": training},
+            {
+                "url": url,
+                "error": str(error),
+                "training": training,
+                "existing_results": existing_results,
+            },
             status_code=400,
         )
     protocol_groups = protocol.groups
@@ -195,6 +204,31 @@ async def training_race_result_import_save(
         group_name=group_name,
         self_row_index=self_row_index,
     )
+
+
+@router.post("/trainings/{training_id}/race-result/attach")
+async def training_race_result_attach(
+    training_id: str,
+    race_result_id: str = Form(...),
+) -> RedirectResponse:
+    await _get_training_or_404(training_id)
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        result = await get_race_result(conn, race_result_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Race result not found")
+        if result.get("training_id") and result["training_id"] != training_id:
+            raise HTTPException(status_code=409, detail="Race result already attached to another training")
+        attached = await attach_race_result_to_training(
+            conn,
+            race_result_id=race_result_id,
+            training_id=training_id,
+        )
+    finally:
+        await conn.close()
+    if attached is None:
+        raise HTTPException(status_code=404, detail="Race result not found")
+    return RedirectResponse(f"/race-results/{race_result_id}", status_code=303)
 
 
 async def _race_result_import_save(
@@ -285,6 +319,16 @@ async def _get_training_or_404(training_id: str | None) -> dict:
     return training
 
 
+async def _list_attachable_results(training_id: str | None) -> list[dict]:
+    if training_id is None:
+        return []
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        return await list_attachable_race_results(conn, training_id)
+    finally:
+        await conn.close()
+
+
 def _compact_time(value: str | None) -> str:
     if not value:
         return ""
@@ -338,6 +382,14 @@ def _prepare_race_result_view(result: dict) -> None:
 
     for participant in participants:
         participant["display_result"] = _compact_time(participant.get("result"))
+        participant["relative_gap_text"] = ""
+        participant["relative_gap_tone"] = ""
+        if self_participant and participant.get("row_index") != self_row_index:
+            participant_seconds = _result_seconds(participant.get("result"))
+            self_seconds = _result_seconds(self_participant.get("result"))
+            if participant_seconds is not None and self_seconds is not None:
+                participant["relative_gap_text"] = _compact_gap(self_seconds - participant_seconds)
+                participant["relative_gap_tone"] = "hot" if participant_seconds < self_seconds else "good"
         if participant.get("row_index") != self_row_index:
             continue
         for split_index, split in enumerate(participant.get("splits", [])):
@@ -534,6 +586,22 @@ def _compact_gap(seconds: int | None) -> str:
     if hours > 0:
         return f"{sign}{hours}:{minutes:02d}:{rest:02d}"
     return f"{sign}{minutes:02d}:{rest:02d}"
+
+
+def _result_seconds(value: str | None) -> int | None:
+    if not value:
+        return None
+    parts = value.strip().split(":")
+    if not parts or not all(part.isdigit() for part in parts):
+        return None
+    numbers = [int(part) for part in parts]
+    if len(numbers) == 3:
+        return numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
+    if len(numbers) == 2:
+        return numbers[0] * 60 + numbers[1]
+    if len(numbers) == 1:
+        return numbers[0]
+    return None
 
 
 def _training_view_model(training: dict) -> dict:

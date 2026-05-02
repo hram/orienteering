@@ -13,6 +13,7 @@
     pixel: transform ? geoToPixel(point) : {pixel_x: 0, pixel_y: 0},
     seconds: window.OrienteeringSplits.parsePointSeconds(point, index),
   }));
+  const hasTrack = trackPoints.length >= 2;
   const splits = window.OrienteeringSplits.calculateSplits(courseControls, trackPoints);
 
   document.querySelectorAll(".race-split-analysis-button").forEach((button) => {
@@ -23,15 +24,28 @@
 
   function openSplitAnalysisByLabel(label) {
     const normalized = normalizeSplitLabel(label);
-    const row = splits.find((split) => normalizeSplitLabel(split.label) === normalized);
-    if (!row || !image) {
+    if (hasTrack) {
+      const row = splits.find((split) => normalizeSplitLabel(split.label) === normalized);
+      if (!row || !image) {
+        return;
+      }
+      window.SplitAnalysisDialog.open({
+        trainingId,
+        row,
+        image,
+        trackPoints,
+      });
       return;
     }
-    window.SplitAnalysisDialog.open({
+
+    const row = buildProtocolSplitRow(normalized);
+    if (!row || !image || !window.SplitViewDialog) {
+      return;
+    }
+    window.SplitViewDialog.open({
       trainingId,
       row,
       image,
-      trackPoints,
     });
   }
 
@@ -50,6 +64,32 @@
 
   function normalizeSplitLabel(label) {
     return String(label).trim().toUpperCase() === "F" ? "Ф" : String(label).trim();
+  }
+
+  function buildProtocolSplitRow(label) {
+    const splitControls = courseControls.filter((control) => control.kind !== "start-point");
+    const targetIndex = splitControls.findIndex((control) => normalizeSplitLabel(control.label) === label);
+    if (targetIndex <= 0) {
+      return null;
+    }
+    const toControl = splitControls[targetIndex];
+    const fromControl = splitControls[targetIndex - 1];
+    const viaControls = courseControlsBetween(courseControls, fromControl, toControl);
+    return {
+      label,
+      fromControl,
+      viaControls,
+      toControl,
+    };
+  }
+
+  function courseControlsBetween(allControls, previousControl, currentControl) {
+    const previousIndex = previousControl.index - 1;
+    const currentIndex = currentControl.index - 1;
+    if (currentIndex - previousIndex <= 1) {
+      return [];
+    }
+    return allControls.slice(previousIndex + 1, currentIndex);
   }
 
   function parseJson(rawValue, fallback) {

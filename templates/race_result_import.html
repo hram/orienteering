@@ -36,6 +36,43 @@
           </div>
         </form>
       </section>
+
+      {% if training %}
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <h2>Ранее импортированные протоколы</h2>
+              <p class="muted">Можно привязать уже сохранённый протокол к этой тренировке без повторного импорта.</p>
+            </div>
+          </div>
+          {% if existing_results %}
+            <div class="training-list">
+              {% for result in existing_results %}
+                <article class="training-row">
+                  <div>
+                    <strong>{{ result.event_name }}</strong>
+                    <span>
+                      {{ result.group_name }}
+                      · {{ result.participant_count }} участников
+                      {% if result.self_participant %} · Я: {{ result.self_participant.name }}{% endif %}
+                    </span>
+                  </div>
+                  <div class="training-actions">
+                    <form method="post" action="/trainings/{{ training.training_id }}/race-result/attach">
+                      <input type="hidden" name="race_result_id" value="{{ result.race_result_id }}">
+                      <button class="button compact primary" type="submit">
+                        {% if result.training_id == training.training_id %}Уже привязан{% else %}Привязать{% endif %}
+                      </button>
+                    </form>
+                  </div>
+                </article>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="muted">Пока нет ранее импортированных протоколов, доступных для привязки.</p>
+          {% endif %}
+        </section>
+      {% endif %}
     </main>
   </body>
 </html>

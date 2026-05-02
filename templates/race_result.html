@@ -82,7 +82,12 @@
                       <small>{{ name_parts[1] }}</small>
                     {% endif %}
                   </td>
-                  <td>{{ participant.display_result }}</td>
+                  <td>
+                    <span>{{ participant.display_result }}</span>
+                    {% if participant.relative_gap_text %}
+                      <small class="race-split-gap{% if participant.relative_gap_tone == 'hot' %} race-split-gap-hot{% elif participant.relative_gap_tone == 'good' %} race-split-gap-good{% endif %}">{{ participant.relative_gap_text }}</small>
+                    {% endif %}
+                  </td>
                   {% for split in participant.splits %}
                     <td class="{% if split.split and split.split.rank == 1 %}race-best-split-cell{% endif %}">
                       {% if split.cumulative %}<span>{{ split.cumulative.time }}{% if split.cumulative.rank %} ({{ split.cumulative.rank }}){% endif %}</span>{% endif %}
@@ -97,7 +102,7 @@
                           data-split-label="{{ split.label }}"
                           aria-label="Анализ сплита {{ split.label }}"
                           title="Анализ сплита"
-                        >↗ Анализ</button>
+                        >↗ {% if training and training.track_points %}Анализ{% else %}Просмотр{% endif %}</button>
                       {% endif %}
                     </td>
                   {% endfor %}
@@ -176,7 +181,7 @@
                               data-split-label="{{ split.label }}"
                               aria-label="Анализ сплита {{ split.label }}"
                               title="Анализ сплита"
-                            >↗ Анализ</button>
+                            >↗ {% if training and training.track_points %}Анализ{% else %}Просмотр{% endif %}</button>
                           {% endif %}
                         </td>
                       {% endif %}
@@ -206,9 +211,15 @@
     </script>
     {% if training %}
       {% include "partials/split_analysis_dialog.html" %}
+      {% if not training.track_points %}
+        {% include "partials/split_view_dialog.html" %}
+      {% endif %}
       <img id="race-analysis-map-image" src="{{ training.map_image_url }}" alt="" hidden>
       <script src="/static/splits.js"></script>
       <script src="/static/split_analysis_dialog.js"></script>
+      {% if not training.track_points %}
+        <script src="/static/split_view_dialog.js"></script>
+      {% endif %}
       <script src="/static/race_result.js"></script>
     {% endif %}
   </body>

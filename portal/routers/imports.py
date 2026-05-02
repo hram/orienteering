@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from portal.db import (
+    clear_import_draft_track,
     connect_db,
     create_edit_import_draft,
     create_import_draft,
@@ -346,6 +347,27 @@ async def upload_import_track_gpx(draft_id: str, file: UploadFile = File(...)) -
         "track_points": track_points,
         "point_count": len(track_points),
     }
+
+
+@router.post("/trainings/imports/{draft_id}/track/delete")
+async def delete_import_track(draft_id: str) -> RedirectResponse:
+    draft = await _get_draft_or_404(draft_id)
+    track_path = draft.get("track_gpx_path")
+
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        updated = await clear_import_draft_track(conn, draft_id)
+    finally:
+        await conn.close()
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Import draft not found")
+
+    if track_path:
+        path = Path(track_path).expanduser()
+        if path.exists():
+            path.unlink()
+
+    return RedirectResponse(f"/trainings/imports/{draft_id}/track", status_code=303)
 
 
 @router.post("/api/trainings/{training_id}/track-points")

@@ -75,6 +75,67 @@ def test_import_track_page_renders() -> None:
     assert "splits-table-body" not in response.text
 
 
+def test_import_track_can_be_deleted_from_draft() -> None:
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/trainings/imports",
+            data={"title": "Bad track", "date": "2026-04-29"},
+            follow_redirects=False,
+        )
+        draft_id = create_response.headers["location"].split("/")[3]
+        client.post(
+            f"/api/imports/{draft_id}/map-image",
+            files={"file": ("map.png", b"fake-map", "image/png")},
+        )
+        client.post(
+            f"/api/imports/{draft_id}/georef",
+            json={
+                "control_points": [
+                    {"pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"pixel_x": 1000, "pixel_y": 0, "lat": 60.0, "lon": 30.01},
+                    {"pixel_x": 0, "pixel_y": 1000, "lat": 59.99, "lon": 30.0},
+                ]
+            },
+        )
+        upload_response = client.post(
+            f"/api/imports/{draft_id}/track-gpx",
+            files={
+                "file": (
+                    "track.gpx",
+                    b"""<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test">
+  <trk><name>Test</name><trkseg>
+    <trkpt lat="60.0" lon="30.0"><ele>10</ele><time>2026-04-29T10:00:00Z</time></trkpt>
+    <trkpt lat="60.001" lon="30.001"><ele>11</ele><time>2026-04-29T10:00:05Z</time></trkpt>
+  </trkseg></trk>
+</gpx>""",
+                    "application/gpx+xml",
+                )
+            },
+        )
+        before_delete = client.get(f"/trainings/imports/{draft_id}/track")
+        delete_response = client.post(
+            f"/trainings/imports/{draft_id}/track/delete",
+            follow_redirects=False,
+        )
+        after_delete = client.get(f"/trainings/imports/{draft_id}/track")
+        draft_api = client.get(f"/api/imports/{draft_id}")
+
+    assert upload_response.status_code == 200
+    assert upload_response.json()["point_count"] == 2
+    assert before_delete.status_code == 200
+    assert "Удалить трек" in before_delete.text
+    assert "track.gpx" in before_delete.text
+    assert delete_response.status_code == 303
+    assert delete_response.headers["location"] == f"/trainings/imports/{draft_id}/track"
+    assert after_delete.status_code == 200
+    assert "Удалить трек" not in after_delete.text
+    assert "track.gpx" not in after_delete.text
+    assert draft_api.status_code == 200
+    assert draft_api.json()["draft"]["track_points"] == []
+    assert draft_api.json()["draft"]["track_gpx_filename"] is None
+
+
 def test_finish_training_import_redirects_to_trainings() -> None:
     with TestClient(app) as client:
         create_response = client.post(

@@ -1,0 +1,35 @@
+<div id="split-view-modal" class="split-analysis-modal" hidden>
+  <div class="split-analysis-backdrop" data-close-split-view></div>
+  <section class="split-view-dialog split-analysis-dialog" role="dialog" aria-modal="true" aria-labelledby="split-view-title">
+    <header class="split-analysis-header">
+      <div>
+        <h2 id="split-view-title">Сплит</h2>
+        <p id="split-view-summary" class="muted">Просмотр участка карты</p>
+      </div>
+      <div class="split-analysis-actions">
+        <button id="split-view-close" class="split-analysis-close" type="button" aria-label="Закрыть">
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
+    </header>
+    <div class="split-view-body">
+      <div class="split-view-map">
+        <svg id="split-view-svg" class="split-analysis-svg" role="img" aria-label="Карта сплита"></svg>
+      </div>
+      <aside class="split-view-info" aria-label="Сводка сплита">
+        <div class="split-view-card">
+          <strong>Этап</strong>
+          <span id="split-view-stage">—</span>
+        </div>
+        <div class="split-view-card">
+          <strong>Через</strong>
+          <span id="split-view-via">—</span>
+        </div>
+        <div class="split-view-card">
+          <strong>Длина</strong>
+          <span id="split-view-distance">—</span>
+        </div>
+      </aside>
+    </div>
+  </section>
+</div>

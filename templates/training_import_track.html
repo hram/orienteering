@@ -31,9 +31,16 @@
           <input name="file" type="file" accept=".gpx,application/gpx+xml,text/xml" required>
           <button class="button" type="submit">Загрузить GPX</button>
         </form>
-        <form class="actions" method="post" action="/trainings/imports/{{ draft.draft_id }}/finish">
-          <button class="button primary" type="submit">Завершить импорт</button>
-        </form>
+        <div class="actions">
+          {% if draft.track_points %}
+            <form method="post" action="/trainings/imports/{{ draft.draft_id }}/track/delete">
+              <button class="button" type="submit">Удалить трек</button>
+            </form>
+          {% endif %}
+          <form method="post" action="/trainings/imports/{{ draft.draft_id }}/finish">
+            <button class="button primary" type="submit">Завершить импорт</button>
+          </form>
+        </div>
       </section>
 
       <section

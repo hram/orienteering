@@ -867,6 +867,12 @@ textarea {
   min-height: 0;
 }
 
+.split-view-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 280px);
+  min-height: 0;
+}
+
 .split-analysis-visuals {
   display: grid;
   min-height: 0;
@@ -1013,6 +1019,47 @@ textarea {
   stroke-width: 6;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.split-view-line {
+  fill: none;
+  stroke: #b21f5b;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  marker-end: url("#split-view-arrow-head");
+}
+
+.split-view-map {
+  min-height: 0;
+  background: #eef3f5;
+}
+
+.split-view-info {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  padding: 16px;
+  border-left: 1px solid #e3e9ed;
+  background: #f8fafb;
+}
+
+.split-view-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #dce3e7;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+  color: #172126;
+}
+
+.split-view-card strong {
+  font-size: 12px;
+  color: #66747c;
+  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .split-control-marker circle {
@@ -1280,7 +1327,17 @@ textarea {
     grid-template-rows: minmax(0, 1fr) minmax(220px, 38vh);
   }
 
+  .split-view-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
   .split-coach-chat {
+    border-top: 1px solid #e3e9ed;
+    border-left: 0;
+  }
+
+  .split-view-info {
     border-top: 1px solid #e3e9ed;
     border-left: 0;
   }
