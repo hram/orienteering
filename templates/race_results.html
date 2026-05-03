@@ -37,6 +37,7 @@
                   </span>
                 </div>
                 <div class="training-actions">
+                  <a class="button compact" href="{% if result.training_id %}/trainings/{{ result.training_id }}/play{% else %}/trainings/new{% endif %}">Тренировка</a>
                   <a class="button compact" href="/race-results/{{ result.race_result_id }}">Открыть</a>
                   <form method="post" action="/race-results/{{ result.race_result_id }}/delete">
                     <button class="button compact" type="submit">Удалить</button>

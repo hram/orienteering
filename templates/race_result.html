@@ -27,10 +27,7 @@
         </div>
         <div class="actions">
           <a class="button" href="/race-results">Протоколы</a>
-          {% if result.training_id %}
-            <a class="button" href="/trainings/{{ result.training_id }}/play">Плеер</a>
-          {% endif %}
-          <a class="button" href="/trainings">Тренировки</a>
+          <a class="button" href="{% if result.training_id %}/trainings/{{ result.training_id }}/play{% else %}/trainings/new{% endif %}">Тренировка</a>
         </div>
       </header>
 
