@@ -8,6 +8,9 @@
   const svg = document.querySelector("#split-analysis-svg");
   const closeButton = document.querySelector("#split-analysis-close");
   const debugSnapshotButton = document.querySelector("#split-debug-snapshot");
+  const drawToggleButton = document.querySelector("#split-draw-toggle");
+  const drawClearButton = document.querySelector("#split-draw-clear");
+  const routeStats = document.querySelector("#split-route-stats");
   const paceChart = document.querySelector("#split-pace-chart");
   const paceStatus = document.querySelector("#split-pace-status");
   const chatMessages = document.querySelector("#split-chat-messages");
@@ -24,6 +27,10 @@
   let analysisSeconds = 0;
   let scrubPointerId = null;
   let paceSeries = [];
+  let drawMode = false;
+  let altRoutePoints = [];
+  let altRouteLine = null;
+  let drawPointerId = null;
 
   closeButton?.addEventListener("click", close);
   debugSnapshotButton?.addEventListener("click", openDebugSnapshot);
@@ -63,6 +70,12 @@
   });
   paceChart?.addEventListener("pointerup", finishScrub);
   paceChart?.addEventListener("pointercancel", finishScrub);
+  drawToggleButton?.addEventListener("click", toggleDrawMode);
+  drawClearButton?.addEventListener("click", clearAltRoute);
+  svg?.addEventListener("pointerdown", onSvgPointerDown);
+  svg?.addEventListener("pointermove", onSvgPointerMove);
+  svg?.addEventListener("pointerup", onSvgPointerUp);
+  svg?.addEventListener("pointercancel", onSvgPointerUp);
 
   function open(options) {
     if (!options?.row || !options?.image || !svg) {
@@ -77,14 +90,21 @@
       row: options.row,
       image: options.image,
       trackPoints: options.trackPoints || [],
+      transform: options.transform || null,
     };
     analysisSeconds = 0;
+    altRoutePoints = [];
+    drawMode = false;
+    drawPointerId = null;
+    svg?.classList.remove("is-drawing");
     if (title) {
       title.textContent = `Сплит ${active.row.label}`;
     }
     resetChat(active.row);
     renderMap();
     drawPaceChart();
+    updateDrawButtons();
+    updateRouteStats();
     modal.hidden = false;
     document.body.classList.add("modal-open");
     chatStartButton?.focus();
@@ -95,8 +115,17 @@
     document.body.classList.remove("modal-open");
     active = null;
     athleteMarker = null;
+    altRouteLine = null;
+    altRoutePoints = [];
+    drawMode = false;
+    drawPointerId = null;
+    svg?.classList.remove("is-drawing");
     analysisSeconds = 0;
     destroyPaceChart();
+    updateDrawButtons();
+    if (routeStats) {
+      routeStats.hidden = true;
+    }
   }
 
   function resetChat(row) {
@@ -175,6 +204,11 @@
     if (coursePoints.length >= 2) {
       addPolyline(coursePoints.map(controlPixel), "split-course-line");
     }
+    altRouteLine = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    altRouteLine.setAttribute("class", "split-alt-route-line");
+    altRouteLine.setAttribute("fill", "none");
+    svg.appendChild(altRouteLine);
+    renderAltRoute();
     coursePoints.forEach((control, index) => {
       addControlMarker(control, index === 0 ? "from" : index === coursePoints.length - 1 ? "to" : "via");
     });
@@ -343,7 +377,7 @@
 
   function splitPayload(row) {
     const trackSegment = splitTrackSegment(row);
-    return {
+    const payload = {
       label: row.label,
       from: row.fromControl.label,
       via: row.viaControls.map((control) => control.label),
@@ -356,6 +390,11 @@
       track_start_index: row.fromTrackIndex,
       track_end_index: row.toTrackIndex,
     };
+    const altMeters = altRouteLengthMeters();
+    if (altMeters !== null) {
+      payload.alt_route_length_meters = Math.round(altMeters);
+    }
+    return payload;
   }
 
   function appendArrowMarker() {
@@ -688,6 +727,224 @@
 
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
+  }
+
+  function toggleDrawMode() {
+    if (!active) {
+      return;
+    }
+    drawMode = !drawMode;
+    svg?.classList.toggle("is-drawing", drawMode);
+    updateDrawButtons();
+  }
+
+  function clearAltRoute() {
+    altRoutePoints = [];
+    renderAltRoute();
+    updateDrawButtons();
+    updateRouteStats();
+  }
+
+  function updateDrawButtons() {
+    if (drawToggleButton) {
+      drawToggleButton.setAttribute("aria-pressed", drawMode ? "true" : "false");
+    }
+    if (drawClearButton) {
+      drawClearButton.hidden = altRoutePoints.length < 2;
+    }
+  }
+
+  function onSvgPointerDown(event) {
+    if (!drawMode || !active || !svg) {
+      return;
+    }
+    event.preventDefault();
+    drawPointerId = event.pointerId;
+    try {
+      svg.setPointerCapture(event.pointerId);
+    } catch (_) {}
+    altRoutePoints = [];
+    const point = pointerToSvgCoords(event);
+    if (point) {
+      altRoutePoints.push(point);
+    }
+    renderAltRoute();
+  }
+
+  function onSvgPointerMove(event) {
+    if (drawPointerId === null || drawPointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    const point = pointerToSvgCoords(event);
+    if (!point) {
+      return;
+    }
+    const previous = altRoutePoints[altRoutePoints.length - 1];
+    if (previous) {
+      const dx = point.pixel_x - previous.pixel_x;
+      const dy = point.pixel_y - previous.pixel_y;
+      if (dx * dx + dy * dy < 4) {
+        return;
+      }
+    }
+    altRoutePoints.push(point);
+    renderAltRoute();
+  }
+
+  function onSvgPointerUp(event) {
+    if (drawPointerId === null || drawPointerId !== event.pointerId) {
+      return;
+    }
+    try {
+      svg.releasePointerCapture(event.pointerId);
+    } catch (_) {}
+    drawPointerId = null;
+    if (altRoutePoints.length < 2) {
+      altRoutePoints = [];
+      renderAltRoute();
+    }
+    updateDrawButtons();
+    updateRouteStats();
+  }
+
+  function pointerToSvgCoords(event) {
+    if (!svg || typeof svg.createSVGPoint !== "function") {
+      return null;
+    }
+    const point = svg.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) {
+      return null;
+    }
+    const local = point.matrixTransform(ctm.inverse());
+    return {pixel_x: local.x, pixel_y: local.y};
+  }
+
+  function renderAltRoute() {
+    if (!altRouteLine) {
+      return;
+    }
+    if (altRoutePoints.length < 2) {
+      altRouteLine.setAttribute("points", "");
+      return;
+    }
+    altRouteLine.setAttribute(
+      "points",
+      altRoutePoints.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "),
+    );
+  }
+
+  function pixelToGeo(point) {
+    const transform = active?.transform;
+    if (!transform) {
+      return null;
+    }
+    const deltaLon = transform.lon_a * point.pixel_x + transform.lon_b * point.pixel_y;
+    const deltaLat = transform.lat_a * point.pixel_x + transform.lat_b * point.pixel_y;
+    return {lon: deltaLon + transform.lon_c, lat: deltaLat + transform.lat_c};
+  }
+
+  function trackLengthMeters() {
+    if (!active) {
+      return null;
+    }
+    const segment = splitTrackSegment(active.row);
+    if (segment.length < 2) {
+      return null;
+    }
+    let meters = 0;
+    for (let index = 1; index < segment.length; index += 1) {
+      meters += haversineMeters(segment[index - 1], segment[index]);
+    }
+    return meters;
+  }
+
+  function courseLengthMeters() {
+    if (!active || !active.transform) {
+      return null;
+    }
+    const points = [active.row.fromControl, ...active.row.viaControls, active.row.toControl];
+    let meters = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      const a = pixelToGeo(points[index - 1]);
+      const b = pixelToGeo(points[index]);
+      if (!a || !b) {
+        return null;
+      }
+      meters += haversineMeters(a, b);
+    }
+    return meters;
+  }
+
+  function altRouteLengthMeters() {
+    if (altRoutePoints.length < 2 || !active?.transform) {
+      return null;
+    }
+    let meters = 0;
+    for (let index = 1; index < altRoutePoints.length; index += 1) {
+      const a = pixelToGeo(altRoutePoints[index - 1]);
+      const b = pixelToGeo(altRoutePoints[index]);
+      if (!a || !b) {
+        return null;
+      }
+      meters += haversineMeters(a, b);
+    }
+    return meters;
+  }
+
+  function updateRouteStats() {
+    if (!routeStats) {
+      return;
+    }
+    if (!active) {
+      routeStats.hidden = true;
+      routeStats.replaceChildren();
+      return;
+    }
+    const courseMeters = Number.isFinite(active.row.distanceMeters) && active.row.distanceMeters > 0
+      ? active.row.distanceMeters
+      : courseLengthMeters();
+    const trackMeters = trackLengthMeters();
+    const altMeters = altRouteLengthMeters();
+    const rows = [];
+    if (Number.isFinite(courseMeters) && courseMeters > 0) {
+      rows.push({color: "#b21f5b", label: "прямая", meters: courseMeters});
+    }
+    if (Number.isFinite(trackMeters) && trackMeters > 0) {
+      rows.push({color: "#1565c0", label: "трек", meters: trackMeters});
+    }
+    if (Number.isFinite(altMeters) && altMeters > 0) {
+      rows.push({color: "#b026ff", label: "альт.", meters: altMeters});
+    }
+    if (!rows.length) {
+      routeStats.hidden = true;
+      routeStats.replaceChildren();
+      return;
+    }
+    routeStats.hidden = false;
+    routeStats.replaceChildren(...rows.map(buildRouteStatsRow));
+  }
+
+  function buildRouteStatsRow(item) {
+    const row = document.createElement("div");
+    row.className = "split-route-stats-row";
+    const marker = document.createElement("span");
+    marker.className = "split-route-stats-marker";
+    marker.style.background = item.color;
+    const text = document.createElement("span");
+    text.textContent = `${item.label}: ${formatMeters(item.meters)}`;
+    row.append(marker, text);
+    return row;
+  }
+
+  function formatMeters(meters) {
+    if (meters >= 1000) {
+      return `${(meters / 1000).toFixed(2)} км`;
+    }
+    return `${Math.round(meters)} м`;
   }
 
   root.SplitAnalysisDialog = {open, close};

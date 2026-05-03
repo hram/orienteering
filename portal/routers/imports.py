@@ -16,6 +16,7 @@ from portal.db import (
     get_latest_race_result_for_training,
     get_import_draft,
     get_training_player,
+    list_non_admin_users,
     list_trainings,
     normalize_db_path,
     set_import_draft_course_controls,
@@ -68,9 +69,11 @@ class SaveTrainingTrackPayload(BaseModel):
 
 @router.get("/trainings", response_class=HTMLResponse)
 async def trainings_page(request: Request) -> HTMLResponse:
+    user = request.state.user
+    viewer_user_id = None if user.is_admin else user.user_id
     conn = await connect_db(normalize_db_path(config.DB_PATH))
     try:
-        trainings = await list_trainings(conn)
+        trainings = await list_trainings(conn, viewer_user_id=viewer_user_id)
     finally:
         await conn.close()
     return templates.TemplateResponse(request, "trainings.html", {"trainings": trainings})
@@ -78,6 +81,14 @@ async def trainings_page(request: Request) -> HTMLResponse:
 
 @router.get("/trainings/new", response_class=HTMLResponse)
 async def new_training_page(request: Request) -> HTMLResponse:
+    user = request.state.user
+    selectable_users: list[dict] = []
+    if user.is_admin:
+        conn = await connect_db(normalize_db_path(config.DB_PATH))
+        try:
+            selectable_users = await list_non_admin_users(conn)
+        finally:
+            await conn.close()
     return templates.TemplateResponse(
         request,
         "training_import_details.html",
@@ -86,6 +97,9 @@ async def new_training_page(request: Request) -> HTMLResponse:
             "form_action": "/trainings/imports",
             "page_title": "Новая тренировка",
             "submit_label": "Дальше",
+            "viewer_is_admin": user.is_admin,
+            "selectable_users": selectable_users,
+            "selected_subject_user_id": None,
         },
     )
 
@@ -127,14 +141,21 @@ async def training_player_page(training_id: str, request: Request) -> HTMLRespon
 
 @router.post("/trainings/imports")
 async def create_training_import_from_form(
+    request: Request,
     title: str = Form(...),
     date: str = Form(...),
     training_type: str = Form("training"),
     location: str = Form(""),
     notes: str = Form(""),
+    subject_user_id: str | None = Form(None),
 ) -> RedirectResponse:
     conn = await connect_db(normalize_db_path(config.DB_PATH))
     try:
+        resolved_subject = await _resolve_subject_user_id(
+            conn,
+            request=request,
+            submitted=subject_user_id,
+        )
         draft = await create_import_draft(
             conn,
             title=title.strip(),
@@ -142,6 +163,7 @@ async def create_training_import_from_form(
             training_type=training_type,
             location=location.strip() or None,
             notes=notes.strip() or None,
+            subject_user_id=resolved_subject,
         )
     finally:
         await conn.close()
@@ -154,6 +176,14 @@ async def create_training_import_from_form(
 @router.get("/trainings/imports/{draft_id}/details", response_class=HTMLResponse)
 async def edit_import_details_page(draft_id: str, request: Request) -> HTMLResponse:
     draft = await _get_draft_or_404(draft_id)
+    user = request.state.user
+    selectable_users: list[dict] = []
+    if user.is_admin:
+        conn = await connect_db(normalize_db_path(config.DB_PATH))
+        try:
+            selectable_users = await list_non_admin_users(conn)
+        finally:
+            await conn.close()
     return templates.TemplateResponse(
         request,
         "training_import_details.html",
@@ -162,6 +192,9 @@ async def edit_import_details_page(draft_id: str, request: Request) -> HTMLRespo
             "form_action": f"/trainings/imports/{draft_id}/details",
             "page_title": "Редактирование тренировки",
             "submit_label": "К карте",
+            "viewer_is_admin": user.is_admin,
+            "selectable_users": selectable_users,
+            "selected_subject_user_id": draft.get("subject_user_id"),
         },
     )
 
@@ -169,23 +202,31 @@ async def edit_import_details_page(draft_id: str, request: Request) -> HTMLRespo
 @router.post("/trainings/imports/{draft_id}/details")
 async def update_training_import_details_from_form(
     draft_id: str,
+    request: Request,
     title: str = Form(...),
     date: str = Form(...),
     training_type: str = Form("training"),
     location: str = Form(""),
     notes: str = Form(""),
+    subject_user_id: str | None = Form(None),
 ) -> RedirectResponse:
+    existing = await _get_draft_or_404(draft_id)
     conn = await connect_db(normalize_db_path(config.DB_PATH))
     try:
-        draft = await update_import_draft_details(
-            conn,
-            draft_id,
-            title=title.strip(),
-            date=date,
-            training_type=training_type,
-            location=location.strip() or None,
-            notes=notes.strip() or None,
-        )
+        update_kwargs: dict = {
+            "title": title.strip(),
+            "date": date,
+            "training_type": training_type,
+            "location": location.strip() or None,
+            "notes": notes.strip() or None,
+        }
+        if not existing.get("edit_training_id"):
+            update_kwargs["subject_user_id"] = await _resolve_subject_user_id(
+                conn,
+                request=request,
+                submitted=subject_user_id,
+            )
+        draft = await update_import_draft_details(conn, draft_id, **update_kwargs)
     finally:
         await conn.close()
     if draft is None:
@@ -412,6 +453,29 @@ async def _get_draft_or_404(draft_id: str) -> dict:
     if draft is None:
         raise HTTPException(status_code=404, detail="Import draft not found")
     return draft
+
+
+async def _resolve_subject_user_id(
+    conn,
+    *,
+    request: Request,
+    submitted: str | None,
+) -> str:
+    user = request.state.user
+    if not user.is_admin:
+        return user.user_id
+    if not submitted:
+        raise HTTPException(
+            status_code=422,
+            detail="Выберите, кому принадлежит тренировка.",
+        )
+    valid_ids = {row["user_id"] for row in await list_non_admin_users(conn)}
+    if submitted not in valid_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="Недопустимый пользователь для видимости тренировки.",
+        )
+    return submitted
 
 
 def _draft_view_model(draft: dict) -> dict:

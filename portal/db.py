@@ -10,6 +10,14 @@ import aiosqlite
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    user_id      TEXT PRIMARY KEY,
+    username     TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    is_admin     INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS maps (
     map_id          TEXT PRIMARY KEY,
     title           TEXT NOT NULL,
@@ -70,6 +78,7 @@ CREATE TABLE IF NOT EXISTS training_import_drafts (
     track_points          TEXT,
     edit_training_id      TEXT,
     finalized_training_id TEXT,
+    subject_user_id       TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL
 );
@@ -88,7 +97,32 @@ CREATE TABLE IF NOT EXISTS race_results (
     created_at     TEXT NOT NULL,
     FOREIGN KEY (training_id) REFERENCES trainings(training_id)
 );
+
+CREATE TABLE IF NOT EXISTS training_visibility (
+    training_id TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (training_id, user_id),
+    FOREIGN KEY (training_id) REFERENCES trainings(training_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS race_result_visibility (
+    race_result_id TEXT NOT NULL,
+    user_id        TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    PRIMARY KEY (race_result_id, user_id),
+    FOREIGN KEY (race_result_id) REFERENCES race_results(race_result_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
 """
+
+
+class _Unset:
+    pass
+
+
+_UNSET = _Unset()
 
 
 def utc_now_iso() -> str:
@@ -105,6 +139,13 @@ async def connect_db(db_path: str) -> aiosqlite.Connection:
     return conn
 
 
+DEFAULT_USERS: tuple[tuple[str, str, bool], ...] = (
+    ("polina", "Полина", False),
+    ("olga", "Ольга", False),
+    ("evgeny", "Евгений", True),
+)
+
+
 async def init_db(db_path: str) -> None:
     normalized = normalize_db_path(db_path)
     Path(normalized).parent.mkdir(parents=True, exist_ok=True)
@@ -112,9 +153,108 @@ async def init_db(db_path: str) -> None:
     try:
         await conn.executescript(SCHEMA)
         await _migrate_schema(conn)
+        await _seed_default_users(conn)
+        await _seed_default_visibility(conn)
         await conn.commit()
     finally:
         await conn.close()
+
+
+async def _seed_default_users(conn: aiosqlite.Connection) -> None:
+    now = utc_now_iso()
+    for username, display_name, is_admin in DEFAULT_USERS:
+        admin_flag = 1 if is_admin else 0
+        cursor = await conn.execute(
+            "SELECT user_id, is_admin FROM users WHERE username = ?",
+            (username,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            await conn.execute(
+                """
+                INSERT INTO users (user_id, username, display_name, is_admin, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (uuid4().hex, username, display_name, admin_flag, now),
+            )
+        elif row["is_admin"] != admin_flag:
+            await conn.execute(
+                "UPDATE users SET is_admin = ? WHERE username = ?",
+                (admin_flag, username),
+            )
+
+
+async def _seed_default_visibility(conn: aiosqlite.Connection) -> None:
+    cursor = await conn.execute("SELECT user_id, username FROM users")
+    user_ids = {row["username"]: row["user_id"] for row in await cursor.fetchall()}
+    polina_id = user_ids.get("polina")
+    olga_id = user_ids.get("olga")
+    evgeny_id = user_ids.get("evgeny")
+    if not (polina_id and olga_id and evgeny_id):
+        return
+    now = utc_now_iso()
+
+    cursor = await conn.execute(
+        """
+        SELECT t.training_id
+        FROM trainings t
+        WHERE NOT EXISTS (
+            SELECT 1 FROM training_visibility v WHERE v.training_id = t.training_id
+        )
+        """
+    )
+    for row in await cursor.fetchall():
+        for user_id in (evgeny_id, polina_id):
+            await conn.execute(
+                """
+                INSERT OR IGNORE INTO training_visibility (training_id, user_id, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (row["training_id"], user_id, now),
+            )
+
+    cursor = await conn.execute(
+        """
+        SELECT r.race_result_id, r.self_row_index, r.participants
+        FROM race_results r
+        WHERE NOT EXISTS (
+            SELECT 1 FROM race_result_visibility v WHERE v.race_result_id = r.race_result_id
+        )
+        """
+    )
+    for row in await cursor.fetchall():
+        race_result_id = row["race_result_id"]
+        await conn.execute(
+            """
+            INSERT OR IGNORE INTO race_result_visibility (race_result_id, user_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (race_result_id, evgeny_id, now),
+        )
+        try:
+            participants = json.loads(row["participants"]) if row["participants"] else []
+        except (json.JSONDecodeError, TypeError):
+            participants = []
+        self_p = next(
+            (p for p in participants if p.get("row_index") == row["self_row_index"]),
+            None,
+        )
+        if not self_p:
+            continue
+        name = (self_p.get("name") or "").lower()
+        target_user_id = None
+        if "полин" in name:
+            target_user_id = polina_id
+        elif "ольг" in name:
+            target_user_id = olga_id
+        if target_user_id:
+            await conn.execute(
+                """
+                INSERT OR IGNORE INTO race_result_visibility (race_result_id, user_id, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (race_result_id, target_user_id, now),
+            )
 
 
 def serialize_json(value: Any) -> str:
@@ -128,6 +268,13 @@ def deserialize_json(value: str | None, default: Any = None) -> Any:
 
 
 async def _migrate_schema(conn: aiosqlite.Connection) -> None:
+    cursor = await conn.execute("PRAGMA table_info(users)")
+    user_columns = {row["name"] for row in await cursor.fetchall()}
+    if user_columns and "is_admin" not in user_columns:
+        await conn.execute(
+            "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
+        )
+
     cursor = await conn.execute("PRAGMA table_info(training_import_drafts)")
     draft_columns = {row["name"] for row in await cursor.fetchall()}
     if "course_controls" not in draft_columns:
@@ -142,6 +289,8 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
         await conn.execute("ALTER TABLE training_import_drafts ADD COLUMN edit_training_id TEXT")
     if "finalized_training_id" not in draft_columns:
         await conn.execute("ALTER TABLE training_import_drafts ADD COLUMN finalized_training_id TEXT")
+    if "subject_user_id" not in draft_columns:
+        await conn.execute("ALTER TABLE training_import_drafts ADD COLUMN subject_user_id TEXT")
 
     cursor = await conn.execute("PRAGMA table_info(trainings)")
     training_columns = {row["name"] for row in await cursor.fetchall()}
@@ -186,17 +335,19 @@ async def create_import_draft(
     training_type: str | None = None,
     location: str | None = None,
     notes: str | None = None,
+    subject_user_id: str | None = None,
 ) -> dict[str, Any]:
     now = utc_now_iso()
     draft_id = uuid4().hex
     await conn.execute(
         """
         INSERT INTO training_import_drafts (
-            draft_id, title, date, training_type, location, notes, created_at, updated_at
+            draft_id, title, date, training_type, location, notes,
+            subject_user_id, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (draft_id, title, date, training_type, location, notes, now, now),
+        (draft_id, title, date, training_type, location, notes, subject_user_id, now, now),
     )
     await conn.commit()
     draft = await get_import_draft(conn, draft_id)
@@ -272,46 +423,114 @@ async def update_import_draft_details(
     training_type: str | None = None,
     location: str | None = None,
     notes: str | None = None,
+    subject_user_id: "str | None | _Unset" = _UNSET,
 ) -> dict[str, Any] | None:
-    await conn.execute(
-        """
-        UPDATE training_import_drafts
-        SET title = ?,
-            date = ?,
-            training_type = ?,
-            location = ?,
-            notes = ?,
-            updated_at = ?
-        WHERE draft_id = ?
-        """,
-        (title, date, training_type, location, notes, utc_now_iso(), draft_id),
-    )
+    if isinstance(subject_user_id, _Unset):
+        await conn.execute(
+            """
+            UPDATE training_import_drafts
+            SET title = ?,
+                date = ?,
+                training_type = ?,
+                location = ?,
+                notes = ?,
+                updated_at = ?
+            WHERE draft_id = ?
+            """,
+            (title, date, training_type, location, notes, utc_now_iso(), draft_id),
+        )
+    else:
+        await conn.execute(
+            """
+            UPDATE training_import_drafts
+            SET title = ?,
+                date = ?,
+                training_type = ?,
+                location = ?,
+                notes = ?,
+                subject_user_id = ?,
+                updated_at = ?
+            WHERE draft_id = ?
+            """,
+            (
+                title,
+                date,
+                training_type,
+                location,
+                notes,
+                subject_user_id,
+                utc_now_iso(),
+                draft_id,
+            ),
+        )
     await conn.commit()
     return await get_import_draft(conn, draft_id)
 
 
-async def list_trainings(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
-    cursor = await conn.execute(
-        """
-        SELECT
-            trainings.*,
-            (
-                SELECT race_results.race_result_id
-                FROM race_results
-                WHERE race_results.training_id = trainings.training_id
-                ORDER BY race_results.created_at DESC
-                LIMIT 1
-            ) AS latest_race_result_id
-        FROM trainings
-        ORDER BY trainings.date DESC, trainings.created_at DESC
-        """
-    )
+async def list_trainings(
+    conn: aiosqlite.Connection,
+    *,
+    viewer_user_id: str | None = None,
+) -> list[dict[str, Any]]:
+    if viewer_user_id is None:
+        cursor = await conn.execute(
+            """
+            SELECT
+                trainings.*,
+                (
+                    SELECT race_results.race_result_id
+                    FROM race_results
+                    WHERE race_results.training_id = trainings.training_id
+                    ORDER BY race_results.created_at DESC
+                    LIMIT 1
+                ) AS latest_race_result_id
+            FROM trainings
+            ORDER BY trainings.date DESC, trainings.created_at DESC
+            """
+        )
+    else:
+        cursor = await conn.execute(
+            """
+            SELECT
+                trainings.*,
+                (
+                    SELECT race_results.race_result_id
+                    FROM race_results
+                    WHERE race_results.training_id = trainings.training_id
+                    ORDER BY race_results.created_at DESC
+                    LIMIT 1
+                ) AS latest_race_result_id
+            FROM trainings
+            JOIN training_visibility v
+              ON v.training_id = trainings.training_id AND v.user_id = ?
+            ORDER BY trainings.date DESC, trainings.created_at DESC
+            """,
+            (viewer_user_id,),
+        )
     rows = await cursor.fetchall()
     return [dict(row) for row in rows]
 
 
-async def list_race_results(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
-    cursor = await conn.execute("SELECT * FROM race_results ORDER BY created_at DESC")
+async def list_race_results(
+    conn: aiosqlite.Connection,
+    *,
+    viewer_user_id: str | None = None,
+) -> list[dict[str, Any]]:
+    if viewer_user_id is None:
+        cursor = await conn.execute(
+            "SELECT * FROM race_results ORDER BY created_at DESC"
+        )
+    else:
+        cursor = await conn.execute(
+            """
+            SELECT race_results.*
+            FROM race_results
+            JOIN race_result_visibility v
+              ON v.race_result_id = race_results.race_result_id AND v.user_id = ?
+            ORDER BY race_results.created_at DESC
+            """,
+            (viewer_user_id,),
+        )
     rows = await cursor.fetchall()
     results = []
     for row in rows:
@@ -705,6 +924,12 @@ async def finalize_import_draft(
             now,
         ),
     )
+    await _seed_training_visibility(
+        conn,
+        training_id=training_id,
+        subject_user_id=draft.get("subject_user_id"),
+        when=now,
+    )
     await conn.execute(
         """
         UPDATE training_import_drafts
@@ -715,6 +940,41 @@ async def finalize_import_draft(
     )
     await conn.commit()
     return await get_training(conn, training_id)
+
+
+async def _seed_training_visibility(
+    conn: aiosqlite.Connection,
+    *,
+    training_id: str,
+    subject_user_id: str | None,
+    when: str,
+) -> None:
+    user_ids: set[str] = set()
+    if subject_user_id:
+        user_ids.add(subject_user_id)
+    cursor = await conn.execute("SELECT user_id FROM users WHERE is_admin = 1")
+    for row in await cursor.fetchall():
+        user_ids.add(row["user_id"])
+    for user_id in user_ids:
+        await conn.execute(
+            """
+            INSERT OR IGNORE INTO training_visibility (training_id, user_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (training_id, user_id, when),
+        )
+
+
+async def list_non_admin_users(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        """
+        SELECT user_id, username, display_name
+        FROM users
+        WHERE is_admin = 0
+        ORDER BY display_name
+        """
+    )
+    return [dict(row) for row in await cursor.fetchall()]
 
 
 async def get_training(conn: aiosqlite.Connection, training_id: str) -> dict[str, Any] | None:

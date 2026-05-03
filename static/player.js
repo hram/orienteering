@@ -790,6 +790,7 @@
       row,
       image,
       trackPoints,
+      transform,
     });
   }
 

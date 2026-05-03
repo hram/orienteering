@@ -1,0 +1,8 @@
+{% if request.state.user %}
+<div class="user-menu" title="{{ request.state.user.username }}">
+  <span class="user-menu-name">{{ request.state.user.display_name }}{% if request.state.user.is_admin %} · admin{% endif %}</span>
+  <form method="post" action="/logout" class="user-menu-form">
+    <button class="button compact" type="submit">Сменить</button>
+  </form>
+</div>
+{% endif %}

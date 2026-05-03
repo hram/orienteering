@@ -32,9 +32,11 @@ router = APIRouter()
 
 @router.get("/race-results", response_class=HTMLResponse)
 async def race_results_page(request: Request) -> HTMLResponse:
+    user = request.state.user
+    viewer_user_id = None if user.is_admin else user.user_id
     conn = await connect_db(normalize_db_path(config.DB_PATH))
     try:
-        results = await list_race_results(conn)
+        results = await list_race_results(conn, viewer_user_id=viewer_user_id)
     finally:
         await conn.close()
     return templates.TemplateResponse(request, "race_results.html", {"results": results})

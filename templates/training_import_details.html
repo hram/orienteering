@@ -45,6 +45,18 @@
           <textarea name="notes" rows="4" placeholder="Цель тренировки, самочувствие, комментарий тренера">{{ draft.notes or '' }}</textarea>
         </label>
 
+        {% if viewer_is_admin and not draft.edit_training_id %}
+        <label>
+          Видимость
+          <select name="subject_user_id" required>
+            <option value="" {% if not selected_subject_user_id %}selected{% endif %} disabled>Кому принадлежит</option>
+            {% for u in selectable_users %}
+              <option value="{{ u.user_id }}" {% if selected_subject_user_id == u.user_id %}selected{% endif %}>{{ u.display_name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endif %}
+
         <div class="actions">
           <a class="button" href="/trainings">Отмена</a>
           <button class="button primary" type="submit">{{ submit_label or "Дальше" }}</button>

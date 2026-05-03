@@ -4,6 +4,16 @@
     <header class="split-analysis-header">
       <h2 id="split-analysis-title">Сплит</h2>
       <div class="split-analysis-actions">
+        <button id="split-draw-toggle" class="split-analysis-icon-button" type="button" aria-pressed="false" aria-label="Рисовать альтернативный маршрут" title="Рисовать альтернативный маршрут">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="currentColor"/>
+          </svg>
+        </button>
+        <button id="split-draw-clear" class="split-analysis-icon-button" type="button" aria-label="Очистить альтернативный маршрут" title="Очистить альтернативный маршрут" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/>
+          </svg>
+        </button>
         <button id="split-debug-snapshot" class="button compact" type="button">PNG для AI</button>
         <button id="split-analysis-close" class="split-analysis-close" type="button" aria-label="Закрыть">
           <span aria-hidden="true">×</span>
@@ -14,6 +24,7 @@
       <div class="split-analysis-visuals">
         <div class="split-analysis-map">
           <svg id="split-analysis-svg" class="split-analysis-svg" role="img" aria-label="Карта сплита"></svg>
+          <div id="split-route-stats" class="split-route-stats" hidden></div>
         </div>
         <div class="split-pace-panel">
           <div class="split-pace-header">

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Кто открывает портал?</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Кто открывает портал?</h1>
+          <p>Выберите себя — это нужно только для удобной фильтрации.</p>
+        </div>
+      </header>
+      <section class="card">
+        <div class="login-grid">
+          {% for user in users %}
+            <form method="post" action="/login">
+              <input type="hidden" name="user_id" value="{{ user.user_id }}">
+              <button class="login-card" type="submit">
+                <span class="login-card-name">{{ user.display_name }}</span>
+                <span class="login-card-username">{{ user.username }}</span>
+              </button>
+            </form>
+          {% endfor %}
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -34,6 +34,7 @@
         row,
         image,
         trackPoints,
+        transform,
       });
       return;
     }

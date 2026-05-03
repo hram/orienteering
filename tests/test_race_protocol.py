@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from portal.main import app
 from portal.services.race_protocol import parse_race_protocol_html
+from tests.conftest import fetch_user_id
 
 
 SAMPLE_PROTOCOL = """<!doctype html>
@@ -234,7 +235,7 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Race with protocol", "date": "2026-04-26"},
+            data={"title": "Race with protocol", "date": "2026-04-26", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]
@@ -367,7 +368,7 @@ def test_training_can_attach_previously_imported_race_result(monkeypatch) -> Non
 
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Attach protocol", "date": "2026-04-26"},
+            data={"title": "Attach protocol", "date": "2026-04-26", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]

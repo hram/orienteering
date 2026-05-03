@@ -15,8 +15,11 @@
         </div>
         <div class="actions">
           <a class="button" href="/trainings">Тренировки</a>
+          {% if request.state.user.is_admin %}
           <a class="button" href="/race-results/grabber">Грабер</a>
+          {% endif %}
           <a class="button primary" href="/race-results/import">Импорт</a>
+          {% include "partials/_user_menu.html" %}
         </div>
       </header>
 
