@@ -3,8 +3,12 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.request import Request, urlopen
+
+
+ProtocolFormat = Literal["js_course", "js_score", "legacy_html"]
+ProtocolKind = Literal["course", "score"]
 
 
 @dataclass(frozen=True)
@@ -12,6 +16,7 @@ class ParsedRaceProtocol:
     event_name: str
     event_meta: str
     groups: list[dict[str, Any]]
+    kind: ProtocolKind = "course"
 
 
 def fetch_race_protocol(url: str) -> str:
@@ -28,13 +33,36 @@ def fetch_race_protocol(url: str) -> str:
         return content.decode("utf-8", errors="replace")
 
 
+def detect_protocol_format(content: str) -> ProtocolFormat:
+    """Pick the parser to use, based on cheap shape signals.
+
+    Logic:
+      - no `const db = "..."` JS blob → legacy HTML protocol with <table class="rezult">
+      - blob has score-only column markers (Баллы / Штраф / Итог) → rogaining / score-O
+      - otherwise → classic course protocol with fixed legs
+    """
+    db_match = re.search(r'const db = "(.*?)";', content, re.S)
+    if not db_match:
+        return "legacy_html"
+    db = db_match.group(1)
+    if re.search(r"\|Баллы\|", db) and re.search(r"\|Итог\|", db):
+        return "js_score"
+    return "js_course"
+
+
 def parse_race_protocol_html(content: str) -> ParsedRaceProtocol:
-    try:
-        event_name = _extract_js_const(content, "eventName")
-        event_meta = _extract_js_const(content, "eventMeta")
-        db = _extract_js_const(content, "db")
-    except ValueError:
+    fmt = detect_protocol_format(content)
+    if fmt == "legacy_html":
         return _parse_legacy_race_protocol_html(content)
+    if fmt == "js_score":
+        return _parse_js_score_race_protocol_html(content)
+    return _parse_js_course_race_protocol_html(content)
+
+
+def _parse_js_course_race_protocol_html(content: str) -> ParsedRaceProtocol:
+    event_name = _extract_js_const(content, "eventName")
+    event_meta = _extract_js_const(content, "eventMeta")
+    db = _extract_js_const(content, "db")
 
     groups = []
     for group_blob in db.split("|||"):
@@ -59,7 +87,44 @@ def parse_race_protocol_html(content: str) -> ParsedRaceProtocol:
                 "participants": participants,
             }
         )
-    return ParsedRaceProtocol(event_name=event_name, event_meta=event_meta, groups=groups)
+    return ParsedRaceProtocol(event_name=event_name, event_meta=event_meta, groups=groups, kind="course")
+
+
+def _parse_js_score_race_protocol_html(content: str) -> ParsedRaceProtocol:
+    """Rogaining / score-O ("выбор", "100КП"): свободный порядок взятия КП.
+
+    Колонки группы: п/п|Фамилия, Имя|Номер|Баллы|Штраф|Итог|Результат|Место|#1|#2|...
+    Ячейка КП: `cumulative[code]<br>split` (split отсутствует у первого взятого КП).
+    """
+    event_name = _extract_js_const(content, "eventName")
+    event_meta = _extract_js_const(content, "eventMeta")
+    db = _extract_js_const(content, "db")
+
+    groups = []
+    for group_blob in db.split("|||"):
+        if not group_blob.strip():
+            continue
+        parts = [part for part in group_blob.split("||") if part.strip()]
+        if len(parts) < 2:
+            continue
+        group_header = parts[0].split("|")
+        headers = parts[1].split("|")
+        kp_columns = [index for index, header in enumerate(headers) if header.strip().startswith("#")]
+        column_meta = _score_column_meta(headers)
+        participants = [
+            _parse_score_participant(row_index, headers, row.split("|"), kp_columns, column_meta)
+            for row_index, row in enumerate(parts[2:])
+            if row.strip()
+        ]
+        groups.append(
+            {
+                "name": _clean(group_header[0]) if group_header else "",
+                "subtitle": _clean(group_header[1]) if len(group_header) > 1 else "",
+                "controls": [],
+                "participants": participants,
+            }
+        )
+    return ParsedRaceProtocol(event_name=event_name, event_meta=event_meta, groups=groups, kind="score")
 
 
 def _parse_legacy_race_protocol_html(content: str) -> ParsedRaceProtocol:
@@ -90,7 +155,7 @@ def _parse_legacy_race_protocol_html(content: str) -> ParsedRaceProtocol:
         )
     if not event_name:
         raise ValueError("Не найдено название соревнований в протоколе")
-    return ParsedRaceProtocol(event_name=event_name, event_meta=event_meta, groups=groups)
+    return ParsedRaceProtocol(event_name=event_name, event_meta=event_meta, groups=groups, kind="course")
 
 
 def _extract_js_const(content: str, name: str) -> str:
@@ -118,6 +183,31 @@ def _parse_controls(headers: list[str]) -> list[dict[str, Any]]:
             }
         )
     return controls
+
+
+def _score_column_meta(headers: list[str]) -> dict[str, int]:
+    """Map well-known score-protocol header names to their column indexes.
+
+    Headers are language-fixed for o-site protocols (Russian), so a name lookup
+    is robust enough and tolerates extra/optional columns ("Команда", etc.) without
+    a brittle positional schema.
+    """
+    indexes: dict[str, int] = {}
+    for index, header in enumerate(headers):
+        cleaned = _clean(header)
+        if cleaned in indexes:
+            continue
+        indexes[cleaned] = index
+    return {
+        "order": indexes.get("п/п", 0),
+        "name": indexes.get("Фамилия, Имя", 1),
+        "bib": indexes.get("Номер", 2),
+        "points": indexes.get("Баллы", -1),
+        "penalty": indexes.get("Штраф", -1),
+        "total_points": indexes.get("Итог", -1),
+        "result": indexes.get("Результат", -1),
+        "place": indexes.get("Место", -1),
+    }
 
 
 def _parse_legacy_participant(
@@ -172,6 +262,44 @@ def _parse_participant(
     }
 
 
+def _parse_score_participant(
+    row_index: int,
+    headers: list[str],
+    values: list[str],
+    kp_columns: list[int],
+    meta: dict[str, int],
+) -> dict[str, Any]:
+    def value(index: int) -> str:
+        if index < 0 or index >= len(values):
+            return ""
+        return values[index]
+
+    visits: list[dict[str, Any]] = []
+    for column_index in kp_columns:
+        visit = _parse_score_visit_cell(value(column_index))
+        if visit is None:
+            continue
+        visit["order"] = len(visits) + 1
+        visits.append(visit)
+    _normalize_first_score_visit(visits)
+
+    return {
+        "row_index": row_index,
+        "order": _to_int(_clean(value(meta["order"]))),
+        "name": _clean(value(meta["name"])),
+        "bib": _clean(value(meta["bib"])),
+        "points": _clean(value(meta["points"])),
+        "penalty": _clean(value(meta["penalty"])),
+        "total_points": _clean(value(meta["total_points"])),
+        "result": _clean(value(meta["result"])),
+        "place": _clean(value(meta["place"])),
+        "gap": "",
+        "splits": [],
+        "visits": visits,
+        "raw_columns": [_clean(value(index)) for index in range(len(headers))],
+    }
+
+
 def _parse_split_cell(control: dict[str, Any], raw_value: str) -> dict[str, Any]:
     parts = re.split(r"<br\s*/?>", raw_value, flags=re.I)
     cumulative = _parse_time_rank(parts[0] if parts else "")
@@ -181,6 +309,34 @@ def _parse_split_cell(control: dict[str, Any], raw_value: str) -> dict[str, Any]
         "code": control["code"],
         "distance_meters": control["distance_meters"],
         "cumulative": cumulative,
+        "split": split,
+    }
+
+
+def _parse_score_visit_cell(raw_value: str) -> dict[str, Any] | None:
+    text = (raw_value or "").strip()
+    if not text:
+        return None
+    parts = re.split(r"<br\s*/?>", raw_value, flags=re.I)
+    cumulative = _parse_time_code(parts[0] if parts else "")
+    if cumulative is None:
+        return None
+    split_text = _clean(parts[1]) if len(parts) > 1 else ""
+    split_seconds = _time_to_seconds(split_text)
+    split: dict[str, Any] | None = None
+    if split_text:
+        split = {
+            "raw": split_text,
+            "time": split_text,
+            "seconds": split_seconds,
+        }
+    return {
+        "code": cumulative["code"],
+        "cumulative": {
+            "raw": cumulative["raw"],
+            "time": cumulative["time"],
+            "seconds": cumulative["seconds"],
+        },
         "split": split,
     }
 
@@ -201,10 +357,34 @@ def _parse_time_rank(value: str) -> dict[str, Any] | None:
     }
 
 
+def _parse_time_code(value: str) -> dict[str, Any] | None:
+    text = _clean(value)
+    if not text:
+        return None
+    match = re.match(r"([0-9:]+)\s*\[([^\]]+)\]\s*$", text)
+    if not match:
+        return None
+    time_text = match.group(1).strip()
+    return {
+        "raw": text,
+        "time": time_text,
+        "seconds": _time_to_seconds(time_text),
+        "code": match.group(2).strip(),
+    }
+
+
 def _normalize_first_split(splits: list[dict[str, Any]]) -> None:
     if not splits:
         return
     first = splits[0]
+    if first.get("split") is None and first.get("cumulative") is not None:
+        first["split"] = dict(first["cumulative"])
+
+
+def _normalize_first_score_visit(visits: list[dict[str, Any]]) -> None:
+    if not visits:
+        return
+    first = visits[0]
     if first.get("split") is None and first.get("cumulative") is not None:
         first["split"] = dict(first["cumulative"])
 

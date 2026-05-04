@@ -5,7 +5,7 @@ import re
 from fastapi.testclient import TestClient
 
 from portal.main import app
-from portal.services.race_protocol import parse_race_protocol_html
+from portal.services.race_protocol import detect_protocol_format, parse_race_protocol_html
 from tests.conftest import fetch_user_id
 
 
@@ -14,6 +14,13 @@ SAMPLE_PROTOCOL = """<!doctype html>
 const eventName = "Тестовый старт";
 const eventMeta = "Черновой протокол";
 const db = "Ж14| ||п/п|Фамилия, Имя|Номер|Результат|Место|Отст.|#1 (31)<br>100 m|#2 (32)<br>110 m|#3 (33)<br>120 m|#4 (34)<br>130 m|#5 (35)<br>140 m|#6 (36)<br>150 m|#7 (37)<br>160 m|#8 (38)<br>170 m|#F(240)||1|Храмова<br>Полина|1566|00:02:15|2|+0:45|0:19(2)<br>0:19(2)|0:37(2)<br>0:18(2)|0:54(2)<br>0:17(2)|1:10(2)<br>0:16(2)|1:25(2)<br>0:15(2)|1:39(2)<br>0:14(2)|1:52(2)<br>0:13(2)|2:04(2)<br>0:12(2)|2:15(2)<br>0:11(2)||2|Иванова<br>Анна|1501|00:01:30|1| |0:10(1)<br>0:10(1)|0:20(1)<br>0:10(1)|0:30(1)<br>0:10(1)|0:40(1)<br>0:10(1)|0:50(1)<br>0:10(1)|1:00(1)<br>0:10(1)|1:10(1)<br>0:10(1)|1:20(1)<br>0:10(1)|1:30(1)<br>0:10(1)|||М14| ||п/п|Фамилия, Имя|Номер|Результат|Место|Отст.|#1 (54)<br>149 m|#F(240)||1|Петров<br>Иван|201|00:10:00|1| |1:00(1)<br>1:00(1)|10:00(1)<br>0:25(1)|||";
+</script>"""
+
+SCORE_PROTOCOL = """<!doctype html>
+<script>
+const eventName = "100КП тест";
+const eventMeta = "Не официальный";
+const db = "ЖВ| ||п/п|Фамилия, Имя|Номер|Баллы|Штраф|Итог|Результат|Место|#1|#2|#3||1|Иванова<br>Анна|10|3| |3|00:50:00|1|5:00[55]<br>|10:00[60]<br>5:00|15:00[65]<br>5:00||2|Петрова<br>Мария|11|2| |2|00:55:00|2|6:00[60]<br>|13:00[55]<br>7:00| |||";
 </script>"""
 
 LEGACY_PROTOCOL = """<!doctype html>
@@ -31,6 +38,89 @@ LEGACY_PROTOCOL = """<!doctype html>
 <tr><th>№ п/п </th><th>Номер </th><th>Фамилия, Имя </th><th>Команда </th><th>Результат </th><th>Место </th><th>Отставание </th><th>#1 (31) </th><th>#F(240) </th></tr>
 <tr><td><nobr>1</td><td><nobr>5001</td><td class='cr'><nobr>Иванов<br>Пётр</td><td class='cr'><nobr>Личное</td><td><nobr>00:09:10</td><td><nobr>1</td><td><nobr></td><td><nobr>1:05(1)<br></td><td><nobr>9:10(1)<br>0:14(1)</td></tr>
 </table>"""
+
+
+def test_detect_protocol_format() -> None:
+    assert detect_protocol_format(SAMPLE_PROTOCOL) == "js_course"
+    assert detect_protocol_format(LEGACY_PROTOCOL) == "legacy_html"
+    assert detect_protocol_format(SCORE_PROTOCOL) == "js_score"
+
+
+def test_parse_score_race_protocol_html() -> None:
+    protocol = parse_race_protocol_html(SCORE_PROTOCOL)
+
+    assert protocol.kind == "score"
+    assert protocol.event_name == "100КП тест"
+    assert len(protocol.groups) == 1
+    group = protocol.groups[0]
+    assert group["name"] == "ЖВ"
+    assert group["controls"] == []
+
+    leader = group["participants"][0]
+    assert leader["name"] == "Иванова Анна"
+    assert leader["bib"] == "10"
+    assert leader["points"] == "3"
+    assert leader["penalty"] == ""
+    assert leader["total_points"] == "3"
+    assert leader["result"] == "00:50:00"
+    assert leader["place"] == "1"
+
+    assert len(leader["visits"]) == 3
+    first_visit = leader["visits"][0]
+    assert first_visit["order"] == 1
+    assert first_visit["code"] == "55"
+    assert first_visit["cumulative"]["seconds"] == 300
+    # First visit's split mirrors cumulative — there's no prior leg.
+    assert first_visit["split"]["seconds"] == 300
+    second_visit = leader["visits"][1]
+    assert second_visit["code"] == "60"
+    assert second_visit["cumulative"]["seconds"] == 600
+    assert second_visit["split"]["seconds"] == 300
+
+    runner_up = group["participants"][1]
+    # Trailing empty visit cells are skipped, not stored as None.
+    assert len(runner_up["visits"]) == 2
+
+
+def test_score_protocol_import_flow(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: SCORE_PROTOCOL)
+
+    with TestClient(app) as client:
+        preview = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://example.test/score.html"},
+        )
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://example.test/score.html",
+                "group_name": "ЖВ",
+                "self_row_index": "0",
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert preview.status_code == 200
+    assert "100КП тест" in preview.text
+    assert "Иванова Анна" in preview.text
+    # Preview shows max-visit hint instead of "КП" for score group.
+    assert "взятий" in preview.text
+    assert save.status_code == 303
+    assert detail.status_code == 200
+    # Score-table specific markers — the third table type.
+    assert "race-score-table" in detail.text
+    assert "race-score-visit-cell" in detail.text
+    # Score header columns — distinguishing the table type.
+    assert "Очки" in detail.text
+    assert "Штраф" in detail.text
+    assert "Итог" in detail.text
+    # KP code from the data must appear (visit cell content).
+    assert "55" in detail.text
+    # Course-only chrome must NOT leak into a score result.
+    assert "Анализ достижимости" not in detail.text
 
 
 def test_parse_race_protocol_html() -> None:

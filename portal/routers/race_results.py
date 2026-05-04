@@ -164,6 +164,7 @@ async def _race_result_import_preview(
         event_name=protocol.event_name,
         event_meta=protocol.event_meta,
         groups=protocol_groups,
+        kind=protocol.kind,
     )
     return templates.TemplateResponse(
         request,
@@ -264,6 +265,7 @@ async def _race_result_import_save(
             controls=group["controls"],
             participants=group["participants"],
             self_row_index=self_row_index,
+            kind=protocol.kind,
         )
     finally:
         await conn.close()
@@ -280,7 +282,10 @@ async def race_result_page(race_result_id: str, request: Request) -> HTMLRespons
         await conn.close()
     if result is None:
         raise HTTPException(status_code=404, detail="Race result not found")
-    _prepare_race_result_view(result)
+    if result.get("kind") == "score":
+        _prepare_score_result_view(result)
+    else:
+        _prepare_race_result_view(result)
     return templates.TemplateResponse(
         request,
         "race_result.html",
@@ -412,6 +417,63 @@ def _prepare_race_result_view(result: dict) -> None:
                 split["leader_gap_tone"] = "good"
             else:
                 split["leader_gap_tone"] = ""
+
+
+def _prepare_score_result_view(result: dict) -> None:
+    """View-model for score / rogaining protocols.
+
+    Course-specific machinery (leader splits, virtual leader, problem indexes,
+    reachability chart) doesn't apply: each participant takes a different set of
+    KPs in their own order. We just normalize display fields.
+    """
+    participants = result.get("participants", [])
+    self_row_index = result.get("self_row_index")
+    self_participant = next(
+        (participant for participant in participants if participant.get("row_index") == self_row_index),
+        None,
+    )
+
+    result["controls"] = result.get("controls") or []
+    result["problem_split_indexes"] = []
+    result["virtual_leader"] = None
+    result["self_problem_total_gap"] = ""
+    result["reachability_chart"] = {}
+
+    self_total = _to_int_or_none(self_participant.get("total_points")) if self_participant else None
+
+    for participant in participants:
+        participant["display_result"] = _compact_time(participant.get("result"))
+        participant["relative_gap_text"] = ""
+        participant["relative_gap_tone"] = ""
+        if (
+            self_participant
+            and participant.get("row_index") != self_row_index
+            and self_total is not None
+        ):
+            other_total = _to_int_or_none(participant.get("total_points"))
+            if other_total is not None:
+                diff = other_total - self_total
+                if diff > 0:
+                    participant["relative_gap_text"] = f"+{diff}"
+                    participant["relative_gap_tone"] = "hot"
+                elif diff < 0:
+                    participant["relative_gap_text"] = f"{diff}"
+                    participant["relative_gap_tone"] = "good"
+
+        for visit in participant.get("visits", []):
+            cumulative = visit.get("cumulative") or {}
+            split = visit.get("split") or {}
+            visit["cumulative_text"] = cumulative.get("time", "")
+            visit["split_text"] = split.get("time", "") if split else ""
+
+
+def _to_int_or_none(value: str | None) -> int | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text or not text.lstrip("-").isdigit():
+        return None
+    return int(text)
 
 
 def _leader_split_seconds_by_split(participants: list[dict]) -> list[int | None]:

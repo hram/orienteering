@@ -21,13 +21,22 @@
 
       <section class="race-group-grid">
         {% for group in protocol.groups %}
+          {% set is_score = protocol.kind == "score" %}
+          {% set max_visits = (group.participants | map(attribute='visits') | map('default', []) | map('length') | list | max) if is_score else 0 %}
           <article class="panel race-group-card">
             <div class="race-group-card-header">
               <div>
                 <h2>{{ group.name }}</h2>
                 {% if group.subtitle %}<p class="muted">{{ group.subtitle }}</p>{% endif %}
               </div>
-              <span class="muted">{{ group.participants|length }} участников · {{ group.controls|length }} КП</span>
+              <span class="muted">
+                {{ group.participants|length }} участников ·
+                {% if is_score %}
+                  до {{ max_visits }} взятий
+                {% else %}
+                  {{ group.controls|length }} КП
+                {% endif %}
+              </span>
             </div>
             <form class="form-stack" action="{% if training %}/trainings/{{ training.training_id }}/race-result/import/save{% else %}/race-results/import/save{% endif %}" method="post">
               <input type="hidden" name="url" value="{{ url }}">
@@ -37,19 +46,21 @@
                 <select name="self_row_index" required>
                   {% for participant in group.participants %}
                     <option value="{{ participant.row_index }}" {% if group.name == selected_group_name and participant.name == selected_participant_name %}selected{% endif %}>
-                      {{ participant.name }}{% if participant.bib %} · №{{ participant.bib }}{% endif %}{% if participant.result %} · {{ participant.result }}{% endif %}
+                      {{ participant.name }}{% if participant.bib %} · №{{ participant.bib }}{% endif %}{% if is_score and participant.total_points %} · {{ participant.total_points }} очк.{% endif %}{% if participant.result %} · {{ participant.result }}{% endif %}
                     </option>
                   {% endfor %}
                 </select>
               </label>
-              <div class="race-group-sample">
-                {% for control in group.controls[:5] %}
-                  <span>{{ control.label }}{% if control.distance_meters %} · {{ control.distance_meters }} м{% endif %}</span>
-                {% endfor %}
-                {% if group.controls|length > 5 %}
-                  <span>…</span>
-                {% endif %}
-              </div>
+              {% if not is_score %}
+                <div class="race-group-sample">
+                  {% for control in group.controls[:5] %}
+                    <span>{{ control.label }}{% if control.distance_meters %} · {{ control.distance_meters }} м{% endif %}</span>
+                  {% endfor %}
+                  {% if group.controls|length > 5 %}
+                    <span>…</span>
+                  {% endif %}
+                </div>
+              {% endif %}
               <div class="actions">
                 <button class="button primary compact" type="submit">Сохранить эту группу</button>
               </div>

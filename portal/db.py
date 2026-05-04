@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS race_results (
     controls       TEXT NOT NULL,
     participants   TEXT NOT NULL,
     self_row_index INTEGER NOT NULL,
+    kind           TEXT NOT NULL DEFAULT 'course',
     created_at     TEXT NOT NULL,
     FOREIGN KEY (training_id) REFERENCES trainings(training_id)
 );
@@ -325,6 +326,8 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
     race_result_columns = {row["name"] for row in await cursor.fetchall()}
     if "training_id" not in race_result_columns:
         await conn.execute("ALTER TABLE race_results ADD COLUMN training_id TEXT")
+    if "kind" not in race_result_columns:
+        await conn.execute("ALTER TABLE race_results ADD COLUMN kind TEXT NOT NULL DEFAULT 'course'")
 
 
 async def create_import_draft(
@@ -576,6 +579,7 @@ async def save_race_result(
     controls: list[dict[str, Any]],
     participants: list[dict[str, Any]],
     self_row_index: int,
+    kind: str = "course",
 ) -> dict[str, Any]:
     now = utc_now_iso()
     race_result_id = uuid4().hex
@@ -584,9 +588,9 @@ async def save_race_result(
         INSERT INTO race_results (
             race_result_id, training_id, source_url, event_name, event_meta,
             group_name, group_subtitle, controls, participants,
-            self_row_index, created_at
+            self_row_index, kind, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             race_result_id,
@@ -599,6 +603,7 @@ async def save_race_result(
             serialize_json(controls),
             serialize_json(participants),
             self_row_index,
+            kind,
             now,
         ),
     )
@@ -1046,6 +1051,7 @@ def race_result_from_row(row: aiosqlite.Row) -> dict[str, Any]:
     result = dict(row)
     result["controls"] = deserialize_json(result.get("controls"), [])
     result["participants"] = deserialize_json(result.get("participants"), [])
+    result["kind"] = result.get("kind") or "course"
     return result
 
 

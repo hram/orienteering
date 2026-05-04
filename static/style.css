@@ -445,6 +445,32 @@ textarea {
   margin-top: 0;
 }
 
+.race-score-table td.race-score-visit-cell {
+  min-width: 64px;
+  text-align: center;
+}
+
+.race-score-visit-code {
+  display: block;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.race-score-visit-cell small {
+  display: block;
+  margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.race-score-visit-cumulative {
+  color: #8c98a0 !important;
+  font-size: 11px;
+}
+
+.race-score-table td.race-score-visit-empty {
+  background: #f2f5f7;
+}
+
 .edit-button {
   display: inline-grid;
   width: 40px;
