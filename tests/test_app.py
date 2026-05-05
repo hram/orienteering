@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 
 from fastapi.testclient import TestClient
@@ -213,6 +214,124 @@ def test_training_player_page_renders_after_import_finish() -> None:
     assert "split-debug-snapshot" in response.text
     assert "split-pace-chart" in response.text
     assert "Темп" in response.text
+
+
+def test_training_can_be_deleted_from_listing() -> None:
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/trainings/imports",
+            data={"title": "Disposable training", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            follow_redirects=False,
+        )
+        draft_id = create_response.headers["location"].split("/")[3]
+        client.post(
+            f"/api/imports/{draft_id}/map-image",
+            files={"file": ("map.png", b"fake-map", "image/png")},
+        )
+        client.post(
+            f"/api/imports/{draft_id}/georef",
+            json={
+                "control_points": [
+                    {"pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"pixel_x": 1000, "pixel_y": 0, "lat": 60.0, "lon": 30.01},
+                    {"pixel_x": 0, "pixel_y": 1000, "lat": 59.99, "lon": 30.0},
+                ]
+            },
+        )
+        client.post(f"/trainings/imports/{draft_id}/finish", follow_redirects=False)
+        listing_before = client.get("/trainings")
+        match = re.search(r'/trainings/([0-9a-f]+)/race-result/import', listing_before.text)
+        assert match is not None
+        training_id = match.group(1)
+
+        delete_response = client.post(
+            f"/trainings/{training_id}/delete",
+            follow_redirects=False,
+        )
+        listing_after = client.get("/trainings")
+        play_after = client.get(f"/trainings/{training_id}/play")
+        delete_missing = client.post(
+            f"/trainings/{training_id}/delete",
+            follow_redirects=False,
+        )
+
+    assert "Disposable training" in listing_before.text
+    # Listing must show a delete form per training.
+    assert f'action="/trainings/{training_id}/delete"' in listing_before.text
+    assert delete_response.status_code == 303
+    assert delete_response.headers["location"] == "/trainings"
+    assert "Disposable training" not in listing_after.text
+    assert play_after.status_code == 404
+    # Second delete on a vanished training is a 404, not a silent 303.
+    assert delete_missing.status_code == 404
+
+
+def test_deleting_training_with_attached_race_result_keeps_result() -> None:
+    with TestClient(app) as client:
+        # Save a race result against a fresh training.
+        from portal.routers import race_results
+        from tests.test_race_protocol import SAMPLE_PROTOCOL
+
+        original_fetch = race_results.fetch_race_protocol
+        race_results.fetch_race_protocol = lambda _url: SAMPLE_PROTOCOL
+        try:
+            create_response = client.post(
+                "/trainings/imports",
+                data={"title": "Training with protocol", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+                follow_redirects=False,
+            )
+            draft_id = create_response.headers["location"].split("/")[3]
+            client.post(
+                f"/api/imports/{draft_id}/map-image",
+                files={"file": ("map.png", b"fake-map", "image/png")},
+            )
+            client.post(
+                f"/api/imports/{draft_id}/georef",
+                json={
+                    "control_points": [
+                        {"pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                        {"pixel_x": 1000, "pixel_y": 0, "lat": 60.0, "lon": 30.01},
+                        {"pixel_x": 0, "pixel_y": 1000, "lat": 59.99, "lon": 30.0},
+                    ]
+                },
+            )
+            client.post(f"/trainings/imports/{draft_id}/finish", follow_redirects=False)
+            listing = client.get("/trainings")
+            training_id = re.search(r'/trainings/([0-9a-f]+)/race-result/import', listing.text).group(1)
+
+            save = client.post(
+                f"/trainings/{training_id}/race-result/import/save",
+                data={
+                    "url": "https://example.test/race/splits.html",
+                    "group_name": "Ж14",
+                    "self_row_index": "0",
+                },
+                follow_redirects=False,
+            )
+            race_result_id = save.headers["location"].split("/")[-1]
+
+            delete_response = client.post(
+                f"/trainings/{training_id}/delete",
+                follow_redirects=False,
+            )
+            race_result_detail = client.get(f"/race-results/{race_result_id}")
+        finally:
+            race_results.fetch_race_protocol = original_fetch
+
+    import sqlite3
+
+    db_row = sqlite3.connect(os.environ["ORIENTEERING_PORTAL_DB_PATH"]).execute(
+        "SELECT training_id FROM race_results WHERE race_result_id = ?",
+        (race_result_id,),
+    ).fetchone()
+
+    assert delete_response.status_code == 303
+    # The race result outlives the training — only its training_id is detached.
+    assert race_result_detail.status_code == 200
+    assert "Тестовый старт" in race_result_detail.text
+    # Direct DB check: training_id must be NULL after detach (not the deleted id).
+    assert db_row is not None
+    assert db_row[0] is None
 
 
 def test_training_edit_wizard_prefills_existing_training() -> None:

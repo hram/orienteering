@@ -32,6 +32,7 @@
             <option value="training" {% if (draft.training_type or 'training') == 'training' %}selected{% endif %}>Тренировка</option>
             <option value="race" {% if draft.training_type == 'race' %}selected{% endif %}>Старт</option>
             <option value="control" {% if draft.training_type == 'control' %}selected{% endif %}>Контрольная</option>
+            <option value="rogaine" {% if draft.training_type == 'rogaine' %}selected{% endif %}>Рогейн</option>
           </select>
         </label>
 

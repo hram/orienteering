@@ -5,6 +5,7 @@
   }
 
   const draftId = workspace.dataset.draftId;
+  const isRogaine = workspace.dataset.trainingType === "rogaine";
   const uploadForm = document.querySelector("#map-upload-form");
   const image = document.querySelector("#map-image");
   const imageStage = document.querySelector(".image-stage");
@@ -587,20 +588,20 @@
     if (index === 0) {
       return "С";
     }
-    if (total > 2 && index === 1) {
+    if (!isRogaine && total > 2 && index === 1) {
       return "К";
     }
     if (total > 1 && index === total - 1) {
       return "Ф";
     }
-    return String(index - 1);
+    return String(isRogaine ? index : index - 1);
   }
 
   function courseControlKind(index, total) {
     if (index === 0) {
       return "start";
     }
-    if (total > 2 && index === 1) {
+    if (!isRogaine && total > 2 && index === 1) {
       return "start-point";
     }
     if (total > 1 && index === total - 1) {
@@ -614,6 +615,11 @@
   }
 
   function routeSummaryText() {
+    if (isRogaine) {
+      const total = courseControls.length;
+      const intermediate = Math.max(total - (total > 1 ? 2 : 1), 0);
+      return `Маршрут: старт, КП ${intermediate}, финиш.`;
+    }
     const officialControls = Math.max(courseControls.length - 3, 0);
     return `Маршрут: старт, пункт К, КП ${officialControls}, финиш.`;
   }

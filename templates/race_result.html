@@ -47,6 +47,14 @@
               <strong>Я</strong>
               <span>{% if result.self_participant %}{{ result.self_participant.name }}{% else %}не выбрано{% endif %}</span>
             </div>
+            {% if result.problem_visit_indexes %}
+              <div class="race-summary-toggle">
+                <label class="race-problem-toggle">
+                  <input type="checkbox" id="race-problem-toggle">
+                  <span>Только проблемы</span>
+                </label>
+              </div>
+            {% endif %}
           </div>
         </section>
 
@@ -89,10 +97,13 @@
                     {% for visit_index in range(max_visits) %}
                       {% if visit_index < participant.visits|length %}
                         {% set visit = participant.visits[visit_index] %}
-                        <td class="race-score-visit-cell">
+                        <td class="race-score-visit-cell{% if visit.is_best_leg %} race-best-split-cell{% endif %}">
                           <span class="race-score-visit-code">{{ visit.code }}</span>
                           {% if visit.split_text %}<small>{{ visit.split_text }}</small>{% endif %}
                           <small class="race-score-visit-cumulative">{{ visit.cumulative_text }}</small>
+                          {% if participant.row_index == result.self_row_index and visit.leader_gap_text %}
+                            <small class="race-split-gap{% if visit.leader_gap_tone == 'hot' %} race-split-gap-hot{% elif visit.leader_gap_tone == 'warm' %} race-split-gap-warm{% elif visit.leader_gap_tone == 'good' %} race-split-gap-good{% endif %}">{{ visit.leader_gap_text }}</small>
+                          {% endif %}
                         </td>
                       {% else %}
                         <td class="race-score-visit-empty"></td>
@@ -104,6 +115,63 @@
             </table>
           </div>
         </section>
+
+        {% if result.problem_visit_indexes and result.self_participant %}
+          <section class="panel race-problem-panel" id="race-problem-panel" hidden>
+            <div class="race-table-wrap">
+              <table class="race-table race-score-table race-problem-table">
+                <thead>
+                  <tr>
+                    <th>Участник</th>
+                    <th>Итог</th>
+                    <th>Время</th>
+                    {% for visit_index in result.problem_visit_indexes %}
+                      {% set visit = result.self_participant.visits[visit_index] %}
+                      <th>
+                        {% if visit.from_code %}{{ visit.from_code }} →{% endif %}
+                        <br>{{ visit.code }}
+                      </th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="race-virtual-leader-row">
+                    <td class="race-participant-name"><span>★ Идеальный лидер</span></td>
+                    <td>—</td>
+                    <td>—</td>
+                    {% for visit_index in result.problem_visit_indexes %}
+                      {% set visit = result.self_participant.visits[visit_index] %}
+                      <td><span>{{ visit.best_leg_text }}</span></td>
+                    {% endfor %}
+                  </tr>
+                  <tr class="race-self-row">
+                    <td class="race-participant-name">
+                      {% set name_parts = result.self_participant.name.split(" ", 1) %}
+                      <span>{{ name_parts[0] }}</span>
+                      {% if name_parts|length > 1 %}
+                        <small>{{ name_parts[1] }}</small>
+                      {% endif %}
+                    </td>
+                    <td><strong>{{ result.self_participant.total_points }}</strong></td>
+                    <td>
+                      <span>{{ result.self_participant.display_result }}</span>
+                      {% if result.self_problem_total_gap %}<small class="race-split-gap race-split-gap-hot">{{ result.self_problem_total_gap }}</small>{% endif %}
+                    </td>
+                    {% for visit_index in result.problem_visit_indexes %}
+                      {% set visit = result.self_participant.visits[visit_index] %}
+                      <td class="race-score-visit-cell{% if visit.is_best_leg %} race-best-split-cell{% endif %}">
+                        <span>{{ visit.split_text }}</span>
+                        {% if visit.leader_gap_text %}
+                          <small class="race-split-gap{% if visit.leader_gap_tone == 'hot' %} race-split-gap-hot{% elif visit.leader_gap_tone == 'warm' %} race-split-gap-warm{% elif visit.leader_gap_tone == 'good' %} race-split-gap-good{% endif %}">{{ visit.leader_gap_text }}</small>
+                        {% endif %}
+                      </td>
+                    {% endfor %}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        {% endif %}
       {% else %}
       <section class="panel">
         <div class="race-summary">

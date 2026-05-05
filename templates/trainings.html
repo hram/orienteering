@@ -39,6 +39,9 @@
                   <a class="play-button" href="/trainings/{{ training.training_id }}/play" aria-label="Play {{ training.title }}" title="Play">
                     <span aria-hidden="true"></span>
                   </a>
+                  <form method="post" action="/trainings/{{ training.training_id }}/delete" onsubmit="return confirm('Удалить тренировку «{{ training.title }}»?');">
+                    <button class="button compact" type="submit">Удалить</button>
+                  </form>
                 </div>
               </article>
             {% endfor %}

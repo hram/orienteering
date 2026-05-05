@@ -435,6 +435,7 @@ def _prepare_score_result_view(result: dict) -> None:
 
     result["controls"] = result.get("controls") or []
     result["problem_split_indexes"] = []
+    result["problem_visit_indexes"] = []
     result["virtual_leader"] = None
     result["self_problem_total_gap"] = ""
     result["reachability_chart"] = {}
@@ -465,6 +466,149 @@ def _prepare_score_result_view(result: dict) -> None:
             split = visit.get("split") or {}
             visit["cumulative_text"] = cumulative.get("time", "")
             visit["split_text"] = split.get("time", "") if split else ""
+            visit["is_best_leg"] = False
+            visit["leader_gap_text"] = ""
+            visit["leader_gap_tone"] = ""
+            visit["from_code"] = None
+            visit["best_leg_seconds"] = None
+            visit["best_leg_text"] = ""
+
+    _annotate_score_best_legs(participants, self_participant)
+
+    hot_indexes, warm_indexes, good_indexes = _classify_score_gap_indexes(self_participant)
+    problem_indexes = hot_indexes | warm_indexes
+    result["problem_visit_indexes"] = sorted(problem_indexes)
+    result["self_problem_total_gap"] = _score_self_problem_total_gap(self_participant, problem_indexes)
+    if self_participant:
+        for visit_index, visit in enumerate(self_participant.get("visits", [])):
+            if visit_index in hot_indexes:
+                visit["leader_gap_tone"] = "hot"
+            elif visit_index in warm_indexes:
+                visit["leader_gap_tone"] = "warm"
+            elif visit_index in good_indexes:
+                visit["leader_gap_tone"] = "good"
+
+
+def _annotate_score_best_legs(
+    participants: list[dict],
+    self_participant: dict | None,
+) -> None:
+    """For each leg the self-participant ran, find the best time across the field.
+
+    A leg is the directed pair (prev_kp, current_kp). We only score legs that
+    self ran (otherwise the comparison has no anchor); we only mark a "best"
+    when at least two participants have a timed entry on that leg (otherwise
+    "best" is meaningless). The participant that holds the minimum gets
+    `is_best_leg=True` on that visit (used to paint the cell green); self gets
+    a `leader_gap_text` showing the signed gap to that minimum and stashes the
+    leg's best time in `best_leg_seconds` / `best_leg_text` for the problem
+    table's "Идеальный лидер" row.
+    """
+    if not self_participant:
+        return
+
+    my_legs: set[tuple[str | None, str]] = set()
+    prev_code: str | None = None
+    for visit in self_participant.get("visits", []):
+        code = visit.get("code")
+        visit["from_code"] = prev_code
+        visit["best_leg_seconds"] = None
+        visit["best_leg_text"] = ""
+        if code:
+            my_legs.add((prev_code, code))
+        prev_code = code
+
+    if not my_legs:
+        return
+
+    leg_stats: dict[tuple[str | None, str], dict] = {}
+    for participant in participants:
+        prev_code = None
+        for visit in participant.get("visits", []):
+            code = visit.get("code")
+            split = visit.get("split") or {}
+            seconds = split.get("seconds")
+            key = (prev_code, code)
+            prev_code = code
+            if key not in my_legs or seconds is None:
+                continue
+            entry = leg_stats.setdefault(key, {"best_seconds": seconds, "best_visit": visit, "count": 0})
+            if seconds < entry["best_seconds"]:
+                entry["best_seconds"] = seconds
+                entry["best_visit"] = visit
+            entry["count"] += 1
+
+    for entry in leg_stats.values():
+        if entry["count"] >= 2:
+            entry["best_visit"]["is_best_leg"] = True
+
+    prev_code = None
+    for visit in self_participant.get("visits", []):
+        code = visit.get("code")
+        split = visit.get("split") or {}
+        seconds = split.get("seconds")
+        key = (prev_code, code)
+        prev_code = code
+        entry = leg_stats.get(key)
+        if entry and entry["count"] >= 2:
+            visit["best_leg_seconds"] = entry["best_seconds"]
+            visit["best_leg_text"] = _format_seconds_to_time(entry["best_seconds"])
+            if seconds is not None:
+                visit["leader_gap_text"] = _compact_gap(seconds - entry["best_seconds"])
+
+
+def _classify_score_gap_indexes(self_participant: dict | None) -> tuple[set[int], set[int], set[int]]:
+    """Mirror _classify_gap_indexes for score: top-3 best gaps → "good",
+    next worst-3 positive gaps → "hot", next 3 → "warm".
+
+    Only visits with a comparator (best_leg_seconds is set) are eligible.
+    """
+    if not self_participant:
+        return set(), set(), set()
+    gaps: list[tuple[int, int]] = []
+    for visit_index, visit in enumerate(self_participant.get("visits", [])):
+        best = visit.get("best_leg_seconds")
+        split = visit.get("split") or {}
+        seconds = split.get("seconds")
+        if best is None or seconds is None:
+            continue
+        gaps.append((visit_index, seconds - best))
+
+    good_sorted = sorted(gaps, key=lambda item: item[1])
+    good_indexes = {visit_index for visit_index, _ in good_sorted[:3]}
+
+    remaining = [
+        (visit_index, gap)
+        for visit_index, gap in gaps
+        if visit_index not in good_indexes and gap > 0
+    ]
+    remaining.sort(key=lambda item: item[1], reverse=True)
+    hot_indexes = {visit_index for visit_index, _ in remaining[:3]}
+    warm_indexes = {visit_index for visit_index, _ in remaining[3:6]}
+    return hot_indexes, warm_indexes, good_indexes
+
+
+def _score_self_problem_total_gap(
+    self_participant: dict | None,
+    problem_indexes: set[int],
+) -> str:
+    if not self_participant or not problem_indexes:
+        return ""
+    visits = self_participant.get("visits", [])
+    total = 0
+    has_data = False
+    for visit_index in problem_indexes:
+        if visit_index >= len(visits):
+            continue
+        visit = visits[visit_index]
+        best = visit.get("best_leg_seconds")
+        split = visit.get("split") or {}
+        seconds = split.get("seconds")
+        if best is None or seconds is None:
+            continue
+        total += seconds - best
+        has_data = True
+    return _compact_gap(total) if has_data else ""
 
 
 def _to_int_or_none(value: str | None) -> int | None:

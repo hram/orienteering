@@ -20,7 +20,18 @@ SCORE_PROTOCOL = """<!doctype html>
 <script>
 const eventName = "100КП тест";
 const eventMeta = "Не официальный";
-const db = "ЖВ| ||п/п|Фамилия, Имя|Номер|Баллы|Штраф|Итог|Результат|Место|#1|#2|#3||1|Иванова<br>Анна|10|3| |3|00:50:00|1|5:00[55]<br>|10:00[60]<br>5:00|15:00[65]<br>5:00||2|Петрова<br>Мария|11|2| |2|00:55:00|2|6:00[60]<br>|13:00[55]<br>7:00| |||";
+const db = "ЖВ| ||п/п|Фамилия, Имя|Номер|Баллы|Штраф|Итог|Результат|Место|#1|#2|#3||1|Иванова<br>Анна|10|3| |3|00:50:00|1|5:00[55]<br>|10:00[60]<br>5:00|15:00[65]<br>5:00||2|Петрова<br>Мария|11|2| |2|00:55:00|2|4:00[55]<br>|11:00[70]<br>7:00| |||";
+</script>"""
+
+# Three participants who all run the same five legs through 31→32→33→34→35.
+# Per-leg splits give Anna the "good" tier on legs where she's fastest or close,
+# and "hot" tier on legs 2 and 4 where she loses by 2:00 to the leg leader —
+# enough to populate the problem panel with two columns.
+SCORE_PROTOCOL_PROBLEMS = """<!doctype html>
+<script>
+const eventName = "100КП проблемы";
+const eventMeta = "Не официальный";
+const db = "ЖВ| ||п/п|Фамилия, Имя|Номер|Баллы|Штраф|Итог|Результат|Место|#1|#2|#3|#4|#5||1|Иванова<br>Анна|10|5| |5|00:25:00|2|5:00[31]<br>|10:00[32]<br>5:00|15:00[33]<br>5:00|20:00[34]<br>5:00|25:00[35]<br>5:00||2|Петрова<br>Мария|11|5| |5|00:22:00|1|4:00[31]<br>|8:00[32]<br>4:00|14:00[33]<br>6:00|17:00[34]<br>3:00|22:00[35]<br>5:00||3|Сидорова<br>Ольга|12|5| |5|00:25:00|3|6:00[31]<br>|9:00[32]<br>3:00|16:00[33]<br>7:00|21:00[34]<br>5:00|25:00[35]<br>4:00|||";
 </script>"""
 
 LEGACY_PROTOCOL = """<!doctype html>
@@ -82,6 +93,172 @@ def test_parse_score_race_protocol_html() -> None:
     assert len(runner_up["visits"]) == 2
 
 
+def test_prepare_score_result_view_marks_best_legs_and_self_gap() -> None:
+    from portal.routers.race_results import _prepare_score_result_view
+
+    result = {
+        "kind": "score",
+        "self_row_index": 0,
+        "participants": [
+            {
+                "row_index": 0,
+                "name": "Я",
+                "result": "00:10:00",
+                "total_points": "2",
+                "visits": [
+                    {
+                        "code": "55",
+                        "cumulative": {"time": "5:00", "seconds": 300},
+                        "split": {"time": "5:00", "seconds": 300},
+                    },
+                    {
+                        "code": "60",
+                        "cumulative": {"time": "10:00", "seconds": 600},
+                        "split": {"time": "5:00", "seconds": 300},
+                    },
+                ],
+            },
+            {
+                "row_index": 1,
+                "name": "Соперница",
+                "result": "00:08:00",
+                "total_points": "2",
+                "visits": [
+                    {
+                        "code": "55",
+                        "cumulative": {"time": "4:00", "seconds": 240},
+                        "split": {"time": "4:00", "seconds": 240},
+                    },
+                    {
+                        "code": "70",
+                        "cumulative": {"time": "8:00", "seconds": 480},
+                        "split": {"time": "4:00", "seconds": 240},
+                    },
+                ],
+            },
+        ],
+    }
+
+    _prepare_score_result_view(result)
+
+    me = result["participants"][0]
+    rival = result["participants"][1]
+
+    # Leg (start → 55): both ran it, rival faster — rival owns the green cell, I get the gap.
+    assert rival["visits"][0]["is_best_leg"] is True
+    assert me["visits"][0]["is_best_leg"] is False
+    assert me["visits"][0]["leader_gap_text"] == "+01:00"
+
+    # Leg (55 → 60): only I ran it — no comparison, no green, no gap line.
+    assert me["visits"][1]["is_best_leg"] is False
+    assert me["visits"][1]["leader_gap_text"] == ""
+
+    # Rival's second leg (55 → 70) wasn't on my route — never marked.
+    assert rival["visits"][1]["is_best_leg"] is False
+    assert rival["visits"][1]["leader_gap_text"] == ""
+
+
+def test_prepare_score_result_view_classifies_problem_legs() -> None:
+    from portal.routers.race_results import _prepare_score_result_view
+
+    # Anna's gaps to leg-best: leg1 +1:00, leg2 +2:00, leg3 0, leg4 +2:00, leg5 +1:00.
+    # Sort asc by gap → [(2,0),(0,60),(4,60),(1,120),(3,120)]. Top-3 → good = {0,2,4}.
+    # Remaining positives → hot = {1,3}, warm empty.
+    result = {
+        "kind": "score",
+        "self_row_index": 0,
+        "participants": [
+            {
+                "row_index": 0,
+                "name": "Я",
+                "result": "00:25:00",
+                "total_points": "5",
+                "visits": [
+                    {"code": "31", "cumulative": {"time": "5:00", "seconds": 300}, "split": {"time": "5:00", "seconds": 300}},
+                    {"code": "32", "cumulative": {"time": "10:00", "seconds": 600}, "split": {"time": "5:00", "seconds": 300}},
+                    {"code": "33", "cumulative": {"time": "15:00", "seconds": 900}, "split": {"time": "5:00", "seconds": 300}},
+                    {"code": "34", "cumulative": {"time": "20:00", "seconds": 1200}, "split": {"time": "5:00", "seconds": 300}},
+                    {"code": "35", "cumulative": {"time": "25:00", "seconds": 1500}, "split": {"time": "5:00", "seconds": 300}},
+                ],
+            },
+            {
+                "row_index": 1,
+                "name": "М",
+                "result": "00:22:00",
+                "total_points": "5",
+                "visits": [
+                    {"code": "31", "cumulative": {"time": "4:00", "seconds": 240}, "split": {"time": "4:00", "seconds": 240}},
+                    {"code": "32", "cumulative": {"time": "8:00", "seconds": 480}, "split": {"time": "4:00", "seconds": 240}},
+                    {"code": "33", "cumulative": {"time": "14:00", "seconds": 840}, "split": {"time": "6:00", "seconds": 360}},
+                    {"code": "34", "cumulative": {"time": "17:00", "seconds": 1020}, "split": {"time": "3:00", "seconds": 180}},
+                    {"code": "35", "cumulative": {"time": "22:00", "seconds": 1320}, "split": {"time": "5:00", "seconds": 300}},
+                ],
+            },
+            {
+                "row_index": 2,
+                "name": "О",
+                "result": "00:25:00",
+                "total_points": "5",
+                "visits": [
+                    {"code": "31", "cumulative": {"time": "6:00", "seconds": 360}, "split": {"time": "6:00", "seconds": 360}},
+                    {"code": "32", "cumulative": {"time": "9:00", "seconds": 540}, "split": {"time": "3:00", "seconds": 180}},
+                    {"code": "33", "cumulative": {"time": "16:00", "seconds": 960}, "split": {"time": "7:00", "seconds": 420}},
+                    {"code": "34", "cumulative": {"time": "21:00", "seconds": 1260}, "split": {"time": "5:00", "seconds": 300}},
+                    {"code": "35", "cumulative": {"time": "25:00", "seconds": 1500}, "split": {"time": "4:00", "seconds": 240}},
+                ],
+            },
+        ],
+    }
+
+    _prepare_score_result_view(result)
+
+    assert result["problem_visit_indexes"] == [1, 3]
+    me = result["participants"][0]
+    tones = [visit["leader_gap_tone"] for visit in me["visits"]]
+    assert tones == ["good", "hot", "good", "hot", "good"]
+
+    # Best leg times: leg 2 (31→32) = Olya's 3:00; leg 4 (33→34) = Maria's 3:00.
+    assert me["visits"][1]["best_leg_text"] == "03:00"
+    assert me["visits"][3]["best_leg_text"] == "03:00"
+    # Anna ran each problem leg in 5:00, leader did each in 3:00 → +04:00 total.
+    assert result["self_problem_total_gap"] == "+04:00"
+
+
+def test_score_protocol_problem_panel_renders(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: SCORE_PROTOCOL_PROBLEMS)
+
+    with TestClient(app) as client:
+        client.post(
+            "/race-results/import/preview",
+            data={"url": "https://example.test/score-problems.html"},
+        )
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://example.test/score-problems.html",
+                "group_name": "ЖВ",
+                "self_row_index": "0",
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert save.status_code == 303
+    assert detail.status_code == 200
+    # Toggle re-uses the existing #race-problem-toggle id so the same JS works.
+    assert 'id="race-problem-toggle"' in detail.text
+    assert "Только проблемы" in detail.text
+    # Problem panel with the "Идеальный лидер" row appears.
+    assert 'id="race-problem-panel"' in detail.text
+    assert "Идеальный лидер" in detail.text
+    # Best leg time on a problem leg (Olya's 3:00 on leg 31→32, Maria's 3:00 on 33→34).
+    assert "03:00" in detail.text
+    # Self problem total gap rendered (two +2:00 → +04:00).
+    assert "+04:00" in detail.text
+
+
 def test_score_protocol_import_flow(monkeypatch) -> None:
     from portal.routers import race_results
 
@@ -121,6 +298,10 @@ def test_score_protocol_import_flow(monkeypatch) -> None:
     assert "55" in detail.text
     # Course-only chrome must NOT leak into a score result.
     assert "Анализ достижимости" not in detail.text
+    # Score-leg analysis: Maria wins leg (start → 55), so the green-best class
+    # is rendered somewhere and self gets a +01:00 gap line on that visit.
+    assert "race-best-split-cell" in detail.text
+    assert "+01:00" in detail.text
 
 
 def test_parse_race_protocol_html() -> None:

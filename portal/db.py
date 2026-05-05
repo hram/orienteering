@@ -657,6 +657,24 @@ async def delete_race_result(conn: aiosqlite.Connection, race_result_id: str) ->
     return cursor.rowcount > 0
 
 
+async def delete_training(conn: aiosqlite.Connection, training_id: str) -> bool:
+    """Delete a training and its tightly-coupled rows.
+
+    Race results survive the training — they have their own lifecycle and own
+    delete on /race-results — so we just detach them by clearing training_id.
+    AI analysis and visibility rows are training-scoped and go with the training.
+    """
+    await conn.execute(
+        "UPDATE race_results SET training_id = NULL WHERE training_id = ?",
+        (training_id,),
+    )
+    await conn.execute("DELETE FROM ai_analysis WHERE training_id = ?", (training_id,))
+    await conn.execute("DELETE FROM training_visibility WHERE training_id = ?", (training_id,))
+    cursor = await conn.execute("DELETE FROM trainings WHERE training_id = ?", (training_id,))
+    await conn.commit()
+    return cursor.rowcount > 0
+
+
 async def attach_race_result_to_training(
     conn: aiosqlite.Connection,
     *,

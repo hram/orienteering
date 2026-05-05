@@ -12,6 +12,7 @@ from portal.db import (
     connect_db,
     create_edit_import_draft,
     create_import_draft,
+    delete_training,
     finalize_import_draft,
     get_latest_race_result_for_training,
     get_import_draft,
@@ -426,6 +427,18 @@ async def save_training_track_points(training_id: str, payload: SaveTrainingTrac
     if training is None:
         raise HTTPException(status_code=404, detail="Training not found")
     return {"training_id": training_id, "point_count": len(track_points)}
+
+
+@router.post("/trainings/{training_id}/delete")
+async def delete_training_route(training_id: str) -> RedirectResponse:
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        deleted = await delete_training(conn, training_id)
+    finally:
+        await conn.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Training not found")
+    return RedirectResponse("/trainings", status_code=303)
 
 
 @router.post("/trainings/imports/{draft_id}/finish")

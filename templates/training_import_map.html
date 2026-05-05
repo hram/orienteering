@@ -38,6 +38,7 @@
         id="georef-workspace"
         class="georef-workspace"
         data-draft-id="{{ draft.draft_id }}"
+        data-training-type="{{ draft.training_type or '' }}"
         data-image-url="{{ draft.map_image_url or '' }}"
         data-existing-points='{{ draft.georef_control_points | tojson }}'
         data-existing-transform='{{ draft.georef_transform | tojson }}'
