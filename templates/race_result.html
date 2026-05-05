@@ -14,6 +14,7 @@
       data-reachability-chart='{{ result.reachability_chart | tojson }}'
       {% if training %}
         data-training-id="{{ training.training_id }}"
+        data-training-type="{{ training.training_type or '' }}"
         data-transform='{{ training.georef_transform | tojson }}'
         data-course-controls='{{ training.course_controls | tojson }}'
         data-track-points='{{ training.track_points | tojson }}'
@@ -104,6 +105,15 @@
                           {% if participant.row_index == result.self_row_index and visit.leader_gap_text %}
                             <small class="race-split-gap{% if visit.leader_gap_tone == 'hot' %} race-split-gap-hot{% elif visit.leader_gap_tone == 'warm' %} race-split-gap-warm{% elif visit.leader_gap_tone == 'good' %} race-split-gap-good{% endif %}">{{ visit.leader_gap_text }}</small>
                           {% endif %}
+                          {% if participant.row_index == result.self_row_index and result.training_id %}
+                            <button
+                              class="race-split-analysis-button"
+                              type="button"
+                              data-score-visit-index="{{ visit_index }}"
+                              aria-label="Анализ взятия {{ visit.code }}"
+                              title="Анализ сплита"
+                            >↗ {% if training and training.track_points %}Анализ{% else %}Просмотр{% endif %}</button>
+                          {% endif %}
                         </td>
                       {% else %}
                         <td class="race-score-visit-empty"></td>
@@ -163,6 +173,15 @@
                         <span>{{ visit.split_text }}</span>
                         {% if visit.leader_gap_text %}
                           <small class="race-split-gap{% if visit.leader_gap_tone == 'hot' %} race-split-gap-hot{% elif visit.leader_gap_tone == 'warm' %} race-split-gap-warm{% elif visit.leader_gap_tone == 'good' %} race-split-gap-good{% endif %}">{{ visit.leader_gap_text }}</small>
+                        {% endif %}
+                        {% if result.training_id %}
+                          <button
+                            class="race-split-analysis-button"
+                            type="button"
+                            data-score-visit-index="{{ visit_index }}"
+                            aria-label="Анализ взятия {{ visit.code }}"
+                            title="Анализ сплита"
+                          >↗ {% if training and training.track_points %}Анализ{% else %}Просмотр{% endif %}</button>
                         {% endif %}
                       </td>
                     {% endfor %}

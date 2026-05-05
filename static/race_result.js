@@ -6,8 +6,12 @@
 
   const image = document.querySelector("#race-analysis-map-image");
   const trainingId = workspace.dataset.trainingId;
+  const trainingType = workspace.dataset.trainingType || "";
   const transform = parseJson(workspace.dataset.transform, null);
-  const courseControls = window.OrienteeringSplits.normalizeCourseControls(parseJson(workspace.dataset.courseControls, []));
+  const courseControls = window.OrienteeringSplits.normalizeCourseControls(
+    parseJson(workspace.dataset.courseControls, []),
+    {trainingType}
+  );
   const trackPoints = parseJson(workspace.dataset.trackPoints, []).map((point, index) => ({
     ...point,
     pixel: transform ? geoToPixel(point) : {pixel_x: 0, pixel_y: 0},
@@ -18,9 +22,43 @@
 
   document.querySelectorAll(".race-split-analysis-button").forEach((button) => {
     button.addEventListener("click", () => {
+      if (button.dataset.scoreVisitIndex !== undefined) {
+        openScoreVisitAnalysis(Number(button.dataset.scoreVisitIndex));
+        return;
+      }
       openSplitAnalysisByLabel(button.dataset.splitLabel);
     });
   });
+
+  function openScoreVisitAnalysis(visitIndex) {
+    if (!Number.isInteger(visitIndex) || visitIndex < 0) {
+      return;
+    }
+    if (hasTrack) {
+      const row = splits[visitIndex];
+      if (!row || !image) {
+        return;
+      }
+      window.SplitAnalysisDialog.open({
+        trainingId,
+        row,
+        image,
+        trackPoints,
+        transform,
+      });
+      return;
+    }
+
+    const row = buildProtocolVisitRow(visitIndex);
+    if (!row || !image || !window.SplitViewDialog) {
+      return;
+    }
+    window.SplitViewDialog.open({
+      trainingId,
+      row,
+      image,
+    });
+  }
 
   function openSplitAnalysisByLabel(label) {
     const normalized = normalizeSplitLabel(label);
@@ -78,6 +116,23 @@
     const viaControls = courseControlsBetween(courseControls, fromControl, toControl);
     return {
       label,
+      fromControl,
+      viaControls,
+      toControl,
+    };
+  }
+
+  function buildProtocolVisitRow(visitIndex) {
+    const splitControls = courseControls.filter((control) => control.kind !== "start-point");
+    const targetIndex = visitIndex + 1;
+    if (targetIndex <= 0 || targetIndex >= splitControls.length) {
+      return null;
+    }
+    const toControl = splitControls[targetIndex];
+    const fromControl = splitControls[targetIndex - 1];
+    const viaControls = courseControlsBetween(courseControls, fromControl, toControl);
+    return {
+      label: toControl.label,
       fromControl,
       viaControls,
       toControl,

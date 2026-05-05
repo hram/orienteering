@@ -304,6 +304,82 @@ def test_score_protocol_import_flow(monkeypatch) -> None:
     assert "+01:00" in detail.text
 
 
+def test_score_protocol_attached_to_rogaine_training_has_split_analysis_buttons(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: SCORE_PROTOCOL)
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/trainings/imports",
+            data={
+                "title": "Rogaine protocol",
+                "date": "2026-04-29",
+                "training_type": "rogaine",
+                "subject_user_id": fetch_user_id("polina"),
+            },
+            follow_redirects=False,
+        )
+        draft_id = create_response.headers["location"].split("/")[3]
+        client.post(
+            f"/api/imports/{draft_id}/map-image",
+            files={"file": ("map.png", b"fake-map", "image/png")},
+        )
+        client.post(
+            f"/api/imports/{draft_id}/georef",
+            json={
+                "control_points": [
+                    {"pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"pixel_x": 1000, "pixel_y": 0, "lat": 60.0, "lon": 30.01},
+                    {"pixel_x": 0, "pixel_y": 1000, "lat": 59.99, "lon": 30.0},
+                ]
+            },
+        )
+        client.post(
+            f"/api/imports/{draft_id}/course-controls",
+            json={
+                "controls": [
+                    {"index": 1, "pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"index": 2, "pixel_x": 100, "pixel_y": 0, "lat": 60.0, "lon": 30.001},
+                    {"index": 3, "pixel_x": 200, "pixel_y": 0, "lat": 60.0, "lon": 30.002},
+                    {"index": 4, "pixel_x": 300, "pixel_y": 0, "lat": 60.0, "lon": 30.003},
+                    {"index": 5, "pixel_x": 400, "pixel_y": 0, "lat": 60.0, "lon": 30.004},
+                ]
+            },
+        )
+        client.post(f"/trainings/imports/{draft_id}/finish", follow_redirects=False)
+        trainings = client.get("/trainings")
+        training_match = re.search(
+            r"Rogaine protocol.*?/trainings/([0-9a-f]+)/race-result/import",
+            trainings.text,
+            re.S,
+        )
+        assert training_match is not None
+        training_id = training_match.group(1)
+
+        save = client.post(
+            f"/trainings/{training_id}/race-result/import/save",
+            data={
+                "url": "https://example.test/score.html",
+                "group_name": "ЖВ",
+                "self_row_index": "0",
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert save.status_code == 303
+    assert detail.status_code == 200
+    assert 'data-training-type="rogaine"' in detail.text
+    assert "race-score-table" in detail.text
+    assert "race-split-analysis-button" in detail.text
+    assert 'data-score-visit-index="0"' in detail.text
+    assert 'data-score-visit-index="1"' in detail.text
+    assert 'data-score-visit-index="2"' in detail.text
+    assert "split-view-modal" in detail.text
+    assert "race_result.js" in detail.text
+
+
 def test_parse_race_protocol_html() -> None:
     protocol = parse_race_protocol_html(SAMPLE_PROTOCOL)
 
