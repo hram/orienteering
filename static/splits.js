@@ -1,10 +1,11 @@
 (function (root) {
-  function normalizeCourseControls(controls) {
+  function normalizeCourseControls(controls, options = {}) {
+    const isRogaine = options.isRogaine === true || options.trainingType === "rogaine";
     return controls.map((control, index) => ({
       ...control,
       index: index + 1,
-      label: courseControlLabel(index, controls.length),
-      kind: courseControlKind(index, controls.length),
+      label: courseControlLabel(index, controls.length, isRogaine),
+      kind: courseControlKind(index, controls.length, isRogaine),
     }));
   }
 
@@ -146,24 +147,24 @@
     return index;
   }
 
-  function courseControlLabel(index, total) {
+  function courseControlLabel(index, total, isRogaine = false) {
     if (index === 0) {
       return "С";
     }
-    if (total > 2 && index === 1) {
+    if (!isRogaine && total > 2 && index === 1) {
       return "К";
     }
     if (total > 1 && index === total - 1) {
       return "Ф";
     }
-    return String(index - 1);
+    return String(isRogaine ? index : index - 1);
   }
 
-  function courseControlKind(index, total) {
+  function courseControlKind(index, total, isRogaine = false) {
     if (index === 0) {
       return "start";
     }
-    if (total > 2 && index === 1) {
+    if (!isRogaine && total > 2 && index === 1) {
       return "start-point";
     }
     if (total > 1 && index === total - 1) {

@@ -24,9 +24,13 @@
   const splitProblemsOnly = document.querySelector("#split-problems-only");
 
   const trainingId = workspace.dataset.trainingId;
+  const trainingType = workspace.dataset.trainingType || "";
   const transform = parseJson(workspace.dataset.transform, null);
   const splitsEngine = window.OrienteeringSplits;
-  const courseControls = splitsEngine.normalizeCourseControls(parseJson(workspace.dataset.courseControls, []));
+  const courseControls = splitsEngine.normalizeCourseControls(
+    parseJson(workspace.dataset.courseControls, []),
+    {trainingType}
+  );
   const hasRaceResult = workspace.dataset.hasRaceResult === "true";
   const raceResultSplitGaps = parseJson(workspace.dataset.raceResultSplitGaps, {}) || {};
   const splitsColumnCount = hasRaceResult ? 7 : 6;

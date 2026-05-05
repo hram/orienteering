@@ -32,6 +32,41 @@ def test_kislovodsk_late_started_track_splits_regression() -> None:
     assert actual["rows"] == expected["rows"]
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for JS split tests")
+def test_rogaine_course_controls_do_not_insert_start_point() -> None:
+    script = """
+const splits = require("./static/splits.js");
+const controls = [
+  {pixel_x: 0, pixel_y: 0, lat: 60.0, lon: 30.0},
+  {pixel_x: 10, pixel_y: 0, lat: 60.0, lon: 30.001},
+  {pixel_x: 20, pixel_y: 0, lat: 60.0, lon: 30.002},
+  {pixel_x: 30, pixel_y: 0, lat: 60.0, lon: 30.003},
+];
+const regular = splits.normalizeCourseControls(controls);
+const rogaine = splits.normalizeCourseControls(controls, {trainingType: "rogaine"});
+console.log(JSON.stringify({
+  regularLabels: regular.map((control) => control.label),
+  regularKinds: regular.map((control) => control.kind),
+  rogaineLabels: rogaine.map((control) => control.label),
+  rogaineKinds: rogaine.map((control) => control.kind),
+}));
+"""
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT_DIR,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    actual = json.loads(result.stdout)
+
+    assert actual["regularLabels"] == ["С", "К", "1", "Ф"]
+    assert actual["regularKinds"] == ["start", "start-point", "control", "finish"]
+    assert actual["rogaineLabels"] == ["С", "1", "2", "Ф"]
+    assert actual["rogaineKinds"] == ["start", "control", "control", "finish"]
+
+
 def calculate_fixture_splits(fixture_name: str) -> tuple[dict, dict]:
     fixture_path = ROOT_DIR / "tests" / "fixtures" / fixture_name
     script = """

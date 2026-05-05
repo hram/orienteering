@@ -5,6 +5,8 @@
   }
 
   const draftId = workspace.dataset.draftId;
+  const trainingType = workspace.dataset.trainingType || "";
+  const isRogaine = trainingType === "rogaine";
   const uploadForm = document.querySelector("#track-upload-form");
   const status = document.querySelector("#track-status");
   const image = document.querySelector("#track-map-image");
@@ -232,20 +234,20 @@
     if (index === 0) {
       return "С";
     }
-    if (total > 2 && index === 1) {
+    if (!isRogaine && total > 2 && index === 1) {
       return "К";
     }
     if (total > 1 && index === total - 1) {
       return "Ф";
     }
-    return String(index - 1);
+    return String(isRogaine ? index : index - 1);
   }
 
   function courseControlKind(index, total) {
     if (index === 0) {
       return "start";
     }
-    if (total > 2 && index === 1) {
+    if (!isRogaine && total > 2 && index === 1) {
       return "start-point";
     }
     if (total > 1 && index === total - 1) {

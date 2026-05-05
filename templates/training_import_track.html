@@ -47,6 +47,7 @@
         id="track-workspace"
         class="track-workspace"
         data-draft-id="{{ draft.draft_id }}"
+        data-training-type="{{ draft.training_type or '' }}"
         data-image-url="{{ draft.map_image_url or '' }}"
         data-transform='{{ draft.georef_transform | tojson }}'
         data-course-controls='{{ draft.course_controls | tojson }}'

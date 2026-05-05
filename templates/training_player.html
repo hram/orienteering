@@ -20,6 +20,7 @@
         id="player-workspace"
         class="player-workspace"
         data-training-id="{{ training.training_id }}"
+        data-training-type="{{ training.training_type or '' }}"
         data-transform='{{ training.georef_transform | tojson }}'
         data-course-controls='{{ training.course_controls | tojson }}'
         data-track-points='{{ training.track_points | tojson }}'
