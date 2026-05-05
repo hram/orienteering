@@ -530,6 +530,8 @@ def _race_result_split_gaps(race_result: dict | None) -> dict[str, dict[str, str
     self_participant = race_result.get("self_participant")
     if not participants or not self_participant:
         return {}
+    if race_result.get("kind") == "score":
+        return _score_race_result_visit_gaps(participants, self_participant)
 
     split_count = max((len(participant.get("splits", [])) for participant in participants), default=0)
     leader_split_seconds: list[int | None] = []
@@ -587,6 +589,82 @@ def _race_result_split_gaps(race_result: dict | None) -> dict[str, dict[str, str
             tone = ""
         gaps[label] = {
             "text": _compact_gap(seconds - leader_seconds),
+            "tone": tone,
+        }
+    return gaps
+
+
+def _score_race_result_visit_gaps(
+    participants: list[dict],
+    self_participant: dict,
+) -> dict[str, dict[str, str]]:
+    my_legs: set[tuple[str | None, str]] = set()
+    prev_code = None
+    for visit in self_participant.get("visits", []):
+        code = visit.get("code")
+        if code:
+            my_legs.add((prev_code, code))
+        prev_code = code
+
+    if not my_legs:
+        return {}
+
+    leg_stats: dict[tuple[str | None, str], dict[str, int | None]] = {}
+    for participant in participants:
+        prev_code = None
+        for visit in participant.get("visits", []):
+            code = visit.get("code")
+            split = visit.get("split") or {}
+            seconds = split.get("seconds")
+            key = (prev_code, code)
+            prev_code = code
+            if key not in my_legs or seconds is None:
+                continue
+            entry = leg_stats.setdefault(key, {"best_seconds": seconds, "count": 0})
+            best_seconds = entry["best_seconds"]
+            if best_seconds is None or seconds < best_seconds:
+                entry["best_seconds"] = seconds
+            entry["count"] = int(entry["count"] or 0) + 1
+
+    indexed_gaps: list[tuple[int, int]] = []
+    prev_code = None
+    for visit_index, visit in enumerate(self_participant.get("visits", [])):
+        code = visit.get("code")
+        split = visit.get("split") or {}
+        seconds = split.get("seconds")
+        key = (prev_code, code)
+        prev_code = code
+        entry = leg_stats.get(key)
+        if not entry or int(entry.get("count") or 0) < 2:
+            continue
+        best_seconds = entry.get("best_seconds")
+        if seconds is None or best_seconds is None:
+            continue
+        indexed_gaps.append((visit_index, seconds - int(best_seconds)))
+
+    good_sorted = sorted(indexed_gaps, key=lambda item: item[1])
+    good_indexes = {visit_index for visit_index, _ in good_sorted[:3]}
+    remaining = [
+        (visit_index, gap_seconds)
+        for visit_index, gap_seconds in indexed_gaps
+        if visit_index not in good_indexes and gap_seconds > 0
+    ]
+    remaining.sort(key=lambda item: item[1], reverse=True)
+    hot_indexes = {visit_index for visit_index, _ in remaining[:3]}
+    warm_indexes = {visit_index for visit_index, _ in remaining[3:6]}
+
+    gaps: dict[str, dict[str, str]] = {}
+    for visit_index, gap_seconds in indexed_gaps:
+        if visit_index in hot_indexes:
+            tone = "hot"
+        elif visit_index in warm_indexes:
+            tone = "warm"
+        elif visit_index in good_indexes:
+            tone = "good"
+        else:
+            tone = ""
+        gaps[str(visit_index + 1)] = {
+            "text": _compact_gap(gap_seconds),
             "tone": tone,
         }
     return gaps

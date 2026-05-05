@@ -158,6 +158,37 @@ def test_prepare_score_result_view_marks_best_legs_and_self_gap() -> None:
     assert rival["visits"][1]["leader_gap_text"] == ""
 
 
+def test_player_split_gaps_use_score_visits_for_rogaine_protocol() -> None:
+    from portal.routers.imports import _race_result_split_gaps
+
+    result = {
+        "kind": "score",
+        "self_row_index": 0,
+        "participants": [
+            {
+                "row_index": 0,
+                "visits": [
+                    {"code": "55", "split": {"seconds": 300}},
+                    {"code": "60", "split": {"seconds": 300}},
+                ],
+            },
+            {
+                "row_index": 1,
+                "visits": [
+                    {"code": "55", "split": {"seconds": 240}},
+                    {"code": "70", "split": {"seconds": 240}},
+                ],
+            },
+        ],
+    }
+    result["self_participant"] = result["participants"][0]
+
+    gaps = _race_result_split_gaps(result)
+
+    assert gaps["1"] == {"text": "+01:00", "tone": "good"}
+    assert "2" not in gaps
+
+
 def test_prepare_score_result_view_classifies_problem_legs() -> None:
     from portal.routers.race_results import _prepare_score_result_view
 
