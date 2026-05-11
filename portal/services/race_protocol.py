@@ -102,6 +102,7 @@ def _parse_js_course_race_protocol_html(content: str) -> ParsedRaceProtocol:
             for row_index, row in enumerate(parts[2:])
             if row.strip()
         ]
+        _fill_missing_split_ranks(participants)
         groups.append(
             {
                 "name": _clean(group_header[0]) if group_header else "",
@@ -168,6 +169,7 @@ def _parse_legacy_race_protocol_html(content: str) -> ParsedRaceProtocol:
             if not cells:
                 continue
             participants.append(_parse_legacy_participant(row_index, headers, cells, controls))
+        _fill_missing_split_ranks(participants)
         groups.append(
             {
                 "name": group_name,
@@ -201,6 +203,7 @@ def parse_pdf_race_protocol(content: str) -> ParsedRaceProtocol:
         if body_prefix:
             body = f"{body_prefix} {body}"
         participants = _parse_pdf_participants(body, controls)
+        _fill_missing_split_ranks(participants)
         groups.append(
             {
                 "name": _clean(match.group("name")),
@@ -568,6 +571,31 @@ def _parse_score_participant(
         "visits": visits,
         "raw_columns": [_clean(value(index)) for index in range(len(headers))],
     }
+
+
+def _fill_missing_split_ranks(participants: list[dict[str, Any]]) -> None:
+    split_count = max((len(participant.get("splits", [])) for participant in participants), default=0)
+    for split_index in range(split_count):
+        ranked_seconds = sorted(
+            {
+                split_time["seconds"]
+                for participant in participants
+                if split_index < len(participant.get("splits", []))
+                for split_time in [participant["splits"][split_index].get("split")]
+                if split_time and split_time.get("seconds") is not None
+            }
+        )
+        ranks = {seconds: index + 1 for index, seconds in enumerate(ranked_seconds)}
+        for participant in participants:
+            splits = participant.get("splits", [])
+            if split_index >= len(splits):
+                continue
+            split_time = splits[split_index].get("split")
+            if not split_time or split_time.get("rank") is not None:
+                continue
+            seconds = split_time.get("seconds")
+            if seconds is not None and seconds in ranks:
+                split_time["rank"] = ranks[seconds]
 
 
 def _parse_split_cell(control: dict[str, Any], raw_value: str) -> dict[str, Any]:

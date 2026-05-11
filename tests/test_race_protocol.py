@@ -525,8 +525,13 @@ def test_parse_pdf_race_protocol() -> None:
     assert participant["splits"][0]["split"]["seconds"] == 59
     assert participant["splits"][0]["split"]["rank"] == 1
     assert participant["splits"][-1]["split"]["seconds"] == 10
+    assert participant["splits"][-1]["split"]["rank"] == 2
     assert participant["splits"][-1]["cumulative"]["time"] == "00:20:22"
     assert participant["splits"][-1]["cumulative"]["rank"] == 2
+
+    leader = group["participants"][0]
+    assert leader["splits"][-1]["split"]["seconds"] == 8
+    assert leader["splits"][-1]["split"]["rank"] == 1
 
 
 def test_prepare_race_result_view_marks_top_gap_tiers() -> None:
