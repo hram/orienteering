@@ -5,7 +5,7 @@ import re
 from fastapi.testclient import TestClient
 
 from portal.main import app
-from portal.services.race_protocol import detect_protocol_format, parse_race_protocol_html
+from portal.services.race_protocol import detect_protocol_format, parse_pdf_race_protocol, parse_race_protocol_html
 from tests.conftest import fetch_user_id
 
 
@@ -61,11 +61,22 @@ LEGACY_PROTOCOL_WITHOUT_TEAM = """<!doctype html>
 <tr><td><nobr>2</td><td><nobr>155</td><td class='cr'><nobr>НОВОКШЕНОВА<br>МАРИЯ</td><td><nobr>00:35:50</td><td><nobr>2</td><td><nobr>+1:14</td><td><nobr>1:25(2)<br></td><td><nobr>35:50(2)<br>0:40(2)</td></tr>
 </table>"""
 
+PDF_PROTOCOL_TEXT = """Чемпионат и Первенство Санкт-Петербурга по спортивному ориентированию10.05.2026 Ленинградская обл., п.ПоляныПРОТОКОЛ РЕЗУЛЬТАТОВ
+Ж14, 9 КП, 2.6 км
+№ Фамилия, имя Коллектив ГР Разряд Номер Результат Отставание Место 31 34 35 38 40 46 47 48 50 F
+1 КАРПОВА АЛЕКСАНДРА ДЮНЫ-Сестрорецк, ГорСЮТур 2012 I 181 00:14:23 1 00:01:00 (2)00:01:00 (2) 00:01:05 (1)00:02:05 (1) 00:01:41 (1)00:03:46 (1) 00:01:04 (2)00:04:50 (1) 00:01:27 (1)00:06:17 (1) 00:04:28 (1)00:10:45 (1) 00:01:19 (1)00:12:04 (1) 00:01:05 (2)00:13:09 (1) 00:01:06 (1)00:14:15 (1) 00:00:0800:14:23 (1)
+2 МАРЧЕНКО ПОЛИНА Сестрорецк ас 2013 I 176 00:20:22 00:05:59 2 00:00:59 (1)00:00:59 (1) 00:04:55 (9)00:05:54 (8) 00:01:53 (2)00:07:47 (5) 00:01:01 (1)00:08:48 (3) 00:01:56 (2)00:10:44 (3) 00:05:08 (2)00:15:52 (2) 00:01:19 (1)00:17:11 (2) 00:01:02 (1)00:18:13 (2) 00:01:59 (9)00:20:12 (2) 00:00:1000:20:22 (2)
+Фитнес2, 9 КП, 2.6 км
+№ Фамилия, имя Коллектив ГР Разряд Номер Результат Отставание Место 31 34 35 38 40 46 47 48 50 F
+1 ЛЕКОНЦЕВ АЛЕКСАНДР ДЮНЫ-Сестрорецк, ГорСЮТур 1989 б/р 343 00:25:58 1 00:01:53 (1)00:01:53 (1) 00:02:05 (1)00:03:58 (1) 00:04:54 (1)00:08:52 (1) 00:02:25 (1)00:11:17 (1) 00:02:34 (1)00:13:51 (1) 00:06:25 (1)00:20:16 (1) 00:01:34 (1)00:21:50 (1) 00:01:33 (1)00:23:23 (1) 00:02:22 (1)00:25:45 (1) 00:00:1200:25:58 (1)
+"""
+
 
 def test_detect_protocol_format() -> None:
     assert detect_protocol_format(SAMPLE_PROTOCOL) == "js_course"
     assert detect_protocol_format(LEGACY_PROTOCOL) == "legacy_html"
     assert detect_protocol_format(SCORE_PROTOCOL) == "js_score"
+    assert detect_protocol_format(PDF_PROTOCOL_TEXT) == "pdf_text"
 
 
 def test_parse_score_race_protocol_html() -> None:
@@ -485,6 +496,39 @@ def test_parse_legacy_race_protocol_html_without_team_column() -> None:
     assert participant["splits"][0]["cumulative"]["time"] == "1:30"
 
 
+def test_parse_pdf_race_protocol() -> None:
+    protocol = parse_pdf_race_protocol(PDF_PROTOCOL_TEXT)
+
+    assert protocol.kind == "course"
+    assert protocol.event_name == "Чемпионат и Первенство Санкт-Петербурга по спортивному ориентированию 10.05.2026 Ленинградская обл., п. Поляны"
+    assert protocol.event_meta == "ПРОТОКОЛ РЕЗУЛЬТАТОВ"
+    assert [group["name"] for group in protocol.groups] == ["Ж14", "Фитнес2"]
+
+    group = protocol.groups[0]
+    assert group["subtitle"] == "9 КП, 2.6 км"
+    assert len(group["controls"]) == 10
+    assert group["controls"][0] == {
+        "column_index": 0,
+        "label": "1",
+        "code": "31",
+        "distance_meters": None,
+    }
+    assert group["controls"][-1]["label"] == "F"
+    assert group["controls"][-1]["code"] == "F"
+
+    participant = group["participants"][1]
+    assert participant["name"] == "МАРЧЕНКО ПОЛИНА"
+    assert participant["bib"] == "176"
+    assert participant["result"] == "00:20:22"
+    assert participant["place"] == "2"
+    assert participant["gap"] == "00:05:59"
+    assert participant["splits"][0]["split"]["seconds"] == 59
+    assert participant["splits"][0]["split"]["rank"] == 1
+    assert participant["splits"][-1]["split"]["seconds"] == 10
+    assert participant["splits"][-1]["cumulative"]["time"] == "00:20:22"
+    assert participant["splits"][-1]["cumulative"]["rank"] == 2
+
+
 def test_prepare_race_result_view_marks_top_gap_tiers() -> None:
     from portal.routers.race_results import _prepare_race_result_view
 
@@ -853,3 +897,36 @@ def test_legacy_race_protocol_import_flow(monkeypatch) -> None:
     assert "Ж10" in detail.text
     assert re.search(r"Болдина\s+Мария", detail.text)
     assert "<nobr>" not in detail.text
+
+
+def test_pdf_race_protocol_import_flow(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: PDF_PROTOCOL_TEXT)
+
+    with TestClient(app) as client:
+        preview = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://example.test/splits.pdf"},
+        )
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://example.test/splits.pdf",
+                "group_name": "Ж14",
+                "self_row_index": "1",
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert preview.status_code == 200
+    assert "Ж14" in preview.text
+    assert "МАРЧЕНКО ПОЛИНА" in preview.text
+    assert "Фитнес2" in preview.text
+    assert save.status_code == 303
+    assert detail.status_code == 200
+    assert "Чемпионат и Первенство Санкт-Петербурга" in detail.text
+    assert "Ж14" in detail.text
+    assert re.search(r"МАРЧЕНКО\s+ПОЛИНА", detail.text)
+    assert "00:20:22" in detail.text

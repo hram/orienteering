@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import html
 import re
+from io import BytesIO
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.request import Request, urlopen
 
+from pypdf import PdfReader
 
-ProtocolFormat = Literal["js_course", "js_score", "legacy_html"]
+ProtocolFormat = Literal["js_course", "js_score", "legacy_html", "pdf_text"]
 ProtocolKind = Literal["course", "score"]
 
 
@@ -23,6 +25,9 @@ def fetch_race_protocol(url: str) -> str:
     request = Request(url, headers={"User-Agent": "orienteering-portal/0.1"})
     with urlopen(request, timeout=20) as response:
         content = response.read()
+        content_type = response.headers.get_content_type()
+        if content_type == "application/pdf" or url.lower().split("?", 1)[0].endswith(".pdf"):
+            return _extract_pdf_text(content)
         for encoding in ("utf-8-sig", response.headers.get_content_charset(), "cp1251"):
             if not encoding:
                 continue
@@ -37,10 +42,13 @@ def detect_protocol_format(content: str) -> ProtocolFormat:
     """Pick the parser to use, based on cheap shape signals.
 
     Logic:
+      - SportOrg PDF text export → PDF parser
       - no `const db = "..."` JS blob → legacy HTML protocol with <table class="rezult">
       - blob has score-only column markers (Баллы / Штраф / Итог) → rogaining / score-O
       - otherwise → classic course protocol with fixed legs
     """
+    if _looks_like_pdf_protocol_text(content):
+        return "pdf_text"
     db_match = re.search(r'const db = "(.*?)";', content, re.S)
     if not db_match:
         return "legacy_html"
@@ -52,11 +60,26 @@ def detect_protocol_format(content: str) -> ProtocolFormat:
 
 def parse_race_protocol_html(content: str) -> ParsedRaceProtocol:
     fmt = detect_protocol_format(content)
+    if fmt == "pdf_text":
+        return parse_pdf_race_protocol(content)
     if fmt == "legacy_html":
         return _parse_legacy_race_protocol_html(content)
     if fmt == "js_score":
         return _parse_js_score_race_protocol_html(content)
     return _parse_js_course_race_protocol_html(content)
+
+
+def _extract_pdf_text(content: bytes) -> str:
+    reader = PdfReader(BytesIO(content))
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+def _looks_like_pdf_protocol_text(content: str) -> bool:
+    return (
+        "ПРОТОКОЛ РЕЗУЛЬТАТОВ" in content
+        and "Фамилия, имя" in content
+        and re.search(r",\s*\d+\s*КП,\s*[\d.,]+\s*км", content) is not None
+    )
 
 
 def _parse_js_course_race_protocol_html(content: str) -> ParsedRaceProtocol:
@@ -156,6 +179,234 @@ def _parse_legacy_race_protocol_html(content: str) -> ParsedRaceProtocol:
     if not event_name:
         raise ValueError("Не найдено название соревнований в протоколе")
     return ParsedRaceProtocol(event_name=event_name, event_meta=event_meta, groups=groups, kind="course")
+
+
+def parse_pdf_race_protocol(content: str) -> ParsedRaceProtocol:
+    normalized = _normalize_pdf_text(content)
+    group_matches = list(_iter_pdf_group_matches(normalized))
+    if not group_matches:
+        raise ValueError("Не найдены группы в PDF-протоколе")
+
+    event_prefix = normalized[: group_matches[0].start()].strip()
+    event_name, event_meta = _pdf_event_text(event_prefix)
+    groups = []
+    for index, match in enumerate(group_matches):
+        body_start = match.end()
+        body_end = group_matches[index + 1].start() if index + 1 < len(group_matches) else len(normalized)
+        control_count = int(match.group("control_count"))
+        codes = match.group("codes").split()
+        controls = _pdf_controls(codes[: control_count + 1])
+        body_prefix = " ".join(codes[control_count + 1 :])
+        body = normalized[body_start:body_end]
+        if body_prefix:
+            body = f"{body_prefix} {body}"
+        participants = _parse_pdf_participants(body, controls)
+        groups.append(
+            {
+                "name": _clean(match.group("name")),
+                "subtitle": f"{match.group('control_count')} КП, {match.group('distance')} км",
+                "controls": controls,
+                "participants": participants,
+            }
+        )
+
+    return ParsedRaceProtocol(event_name=event_name, event_meta=event_meta, groups=groups, kind="course")
+
+
+def _normalize_pdf_text(content: str) -> str:
+    text = content.replace("\r", "\n")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(
+        r"(?<!^)(?=([А-ЯЁA-Z][А-Яа-яЁёA-Za-z0-9_ -]{0,40}),\s*\d+\s*КП,)",
+        "\n",
+        text,
+    )
+    text = re.sub(r"\n+", "\n", text)
+    return text.strip()
+
+
+def _iter_pdf_group_matches(content: str):
+    group_pattern = re.compile(
+        r"(?P<name>[А-ЯЁA-Z][А-Яа-яЁёA-Za-z0-9_ -]{0,40}),\s*"
+        r"(?P<control_count>\d+)\s*КП,\s*"
+        r"(?P<distance>[\d.,]+)\s*км\s*"
+        r"№\s*Фамилия,\s*имя\s+Коллектив\s+ГР\s+Разряд\s+Номер\s+Результат\s+Отставание\s*Место\s+"
+        r"(?P<codes>(?:\d+|F)(?:\s+(?:\d+|F))*)",
+        re.I,
+    )
+    return group_pattern.finditer(content)
+
+
+def _pdf_event_text(prefix: str) -> tuple[str, str]:
+    marker = "ПРОТОКОЛ РЕЗУЛЬТАТОВ"
+    if marker in prefix:
+        before, _, after = prefix.partition(marker)
+        return _clean_pdf_event_name(before) or marker, _clean(f"{marker} {after}")
+    spaced_marker = re.search(r"П\s*Р\s*О\s*Т\s*О\s*К\s*О\s*Л\s+Р\s*Е\s*З\s*У\s*Л\s*Ь\s*Т\s*А\s*Т\s*О\s*В", prefix)
+    if spaced_marker:
+        return _clean_pdf_event_name(prefix[: spaced_marker.start()]) or marker, marker
+    return _clean_pdf_event_name(prefix), ""
+
+
+def _clean_pdf_event_name(value: str) -> str:
+    text = _clean(value)
+    text = re.sub(r"(?<=[А-Яа-яЁё])(?=\d{2}\.\d{2}\.\d{4})", " ", text)
+    text = re.sub(r"(?<=\d{4})(?=[А-Яа-яЁё])", " ", text)
+    text = re.sub(r"(?<=[.,])(?=[А-Яа-яЁё])", " ", text)
+    return _clean(text)
+
+
+def _pdf_controls(codes: list[str]) -> list[dict[str, Any]]:
+    controls = []
+    for index, code in enumerate(codes):
+        controls.append(
+            {
+                "column_index": index,
+                "label": "F" if code == "F" else str(index + 1),
+                "code": code,
+                "distance_meters": None,
+            }
+        )
+    return controls
+
+
+def _parse_pdf_participants(body: str, controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cleaned_body = re.sub(
+        r"№\s*Фамилия,\s*имя\s+Коллектив\s+ГР\s+Разряд\s+Номер\s+Результат\s+Отставание\s*Место\s+(?:\d+|F)(?:\s+(?:\d+|F))*",
+        " ",
+        body,
+        flags=re.I,
+    )
+    records = _split_pdf_participant_records(cleaned_body)
+    participants = []
+    for record in records:
+        parsed = _parse_pdf_participant_record(len(participants), record, controls)
+        if parsed is not None:
+            participants.append(parsed)
+    return participants
+
+
+def _split_pdf_participant_records(body: str) -> list[str]:
+    text = " ".join(line.strip() for line in body.splitlines() if line.strip())
+    starts = [
+        match.start()
+        for match in re.finditer(r"(?<![:\d])\d{1,3}\s+(?=[А-ЯЁA-Z][^\d]{1,80})", text)
+    ]
+    records = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(text)
+        record = text[start:end].strip()
+        if record:
+            records.append(record)
+    return records
+
+
+def _parse_pdf_participant_record(
+    row_index: int,
+    record: str,
+    controls: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    meta_match = re.match(
+        r"(?P<order>\d{1,3})\s+"
+        r"(?P<prefix>.*?)\s+"
+        r"(?P<result>\d{2}:\d{2}:\d{2})\s+"
+        r"(?:(?P<gap>\d{2}:\d{2}:\d{2})\s+)?"
+        r"(?P<place>\d+)\s+"
+        r"(?P<times>.*)$",
+        record,
+    )
+    if meta_match is None:
+        return None
+
+    prefix = meta_match.group("prefix")
+    identity = _parse_pdf_identity(prefix)
+    if identity is None:
+        return None
+
+    time_tokens = _pdf_time_tokens(meta_match.group("times"))
+    expected_token_count = len(controls) * 2
+    if len(time_tokens) < expected_token_count:
+        return None
+
+    splits = []
+    for split_index, control in enumerate(controls):
+        split_token = time_tokens[split_index * 2]
+        cumulative_token = time_tokens[split_index * 2 + 1]
+        splits.append(
+            {
+                "label": control["label"],
+                "code": control["code"],
+                "distance_meters": control["distance_meters"],
+                "cumulative": _pdf_time_token_to_split(cumulative_token),
+                "split": _pdf_time_token_to_split(split_token),
+            }
+        )
+    _normalize_first_split(splits)
+
+    return {
+        "row_index": row_index,
+        "order": _to_int(meta_match.group("order")),
+        "name": identity["name"],
+        "bib": identity["bib"],
+        "result": meta_match.group("result"),
+        "place": meta_match.group("place"),
+        "gap": meta_match.group("gap") or "",
+        "splits": splits,
+        "raw_columns": [
+            meta_match.group("order"),
+            identity["bib"],
+            identity["name"],
+            identity["team"],
+            identity["year"],
+            identity["rank"],
+            meta_match.group("result"),
+            meta_match.group("place"),
+            meta_match.group("gap") or "",
+        ],
+    }
+
+
+def _parse_pdf_identity(prefix: str) -> dict[str, str] | None:
+    match = re.match(
+        r"(?P<name_team>.*?)\s+"
+        r"(?P<year>-?\d{1,4})\s+"
+        r"(?P<rank>\S+)\s+"
+        r"(?P<bib>\d+)$",
+        prefix,
+    )
+    if match is None:
+        return None
+    words = match.group("name_team").split()
+    if len(words) < 2:
+        name = match.group("name_team")
+        team = ""
+    else:
+        name = " ".join(words[:2])
+        team = " ".join(words[2:])
+    return {
+        "name": _clean(name),
+        "team": _clean(team),
+        "year": match.group("year"),
+        "rank": match.group("rank"),
+        "bib": match.group("bib"),
+    }
+
+
+def _pdf_time_tokens(value: str) -> list[tuple[str, int | None]]:
+    return [
+        (match.group(1), int(match.group(2)) if match.group(2) else None)
+        for match in re.finditer(r"(\d{2}:\d{2}:\d{2})(?:\s*\((\d+)\))?", value)
+    ]
+
+
+def _pdf_time_token_to_split(token: tuple[str, int | None]) -> dict[str, Any]:
+    time_text, rank = token
+    return {
+        "raw": f"{time_text}({rank})" if rank is not None else time_text,
+        "time": time_text,
+        "seconds": _time_to_seconds(time_text),
+        "rank": rank,
+    }
 
 
 def _extract_js_const(content: str, name: str) -> str:
