@@ -210,6 +210,23 @@ def _score_column_meta(headers: list[str]) -> dict[str, int]:
     }
 
 
+def _course_column_meta(headers: list[str]) -> dict[str, int]:
+    indexes: dict[str, int] = {}
+    for index, header in enumerate(headers):
+        cleaned = _clean(header)
+        if cleaned in indexes:
+            continue
+        indexes[cleaned] = index
+    return {
+        "order": indexes.get("п/п", 0),
+        "bib": indexes.get("Номер", 1),
+        "name": indexes.get("Фамилия, Имя", 2),
+        "result": indexes.get("Результат", 3),
+        "place": indexes.get("Место", 4),
+        "gap": indexes.get("Отставание", indexes.get("Отст.", 5)),
+    }
+
+
 def _parse_legacy_participant(
     row_index: int,
     headers: list[str],
@@ -223,15 +240,16 @@ def _parse_legacy_participant(
 
     splits = [_parse_split_cell(control, cells[control["column_index"]] if control["column_index"] < len(cells) else "") for control in controls]
     _normalize_first_split(splits)
+    meta = _course_column_meta(headers)
 
     return {
         "row_index": row_index,
-        "order": _to_int(value(0)),
-        "name": value(2),
-        "bib": value(1),
-        "result": value(4),
-        "place": value(5),
-        "gap": value(6),
+        "order": _to_int(value(meta["order"])),
+        "name": value(meta["name"]),
+        "bib": value(meta["bib"]),
+        "result": value(meta["result"]),
+        "place": value(meta["place"]),
+        "gap": value(meta["gap"]),
         "splits": splits,
         "raw_columns": [value(index) for index in range(len(headers))],
     }
@@ -248,15 +266,16 @@ def _parse_participant(
 
     splits = [_parse_split_cell(control, value(control["column_index"])) for control in controls]
     _normalize_first_split(splits)
+    meta = _course_column_meta(headers)
 
     return {
         "row_index": row_index,
-        "order": _to_int(_clean(value(0))),
-        "name": _clean(value(1)),
-        "bib": _clean(value(2)),
-        "result": _clean(value(3)),
-        "place": _clean(value(4)),
-        "gap": _clean(value(5)),
+        "order": _to_int(_clean(value(meta["order"]))),
+        "name": _clean(value(meta["name"])),
+        "bib": _clean(value(meta["bib"])),
+        "result": _clean(value(meta["result"])),
+        "place": _clean(value(meta["place"])),
+        "gap": _clean(value(meta["gap"])),
         "splits": splits,
         "raw_columns": [_clean(value(index)) for index in range(len(headers))],
     }

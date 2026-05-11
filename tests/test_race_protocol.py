@@ -50,6 +50,17 @@ LEGACY_PROTOCOL = """<!doctype html>
 <tr><td><nobr>1</td><td><nobr>5001</td><td class='cr'><nobr>Иванов<br>Пётр</td><td class='cr'><nobr>Личное</td><td><nobr>00:09:10</td><td><nobr>1</td><td><nobr></td><td><nobr>1:05(1)<br></td><td><nobr>9:10(1)<br>0:14(1)</td></tr>
 </table>"""
 
+LEGACY_PROTOCOL_WITHOUT_TEAM = """<!doctype html>
+<meta content='text/html'; charset='utf-8' http-equiv='Content-Type'>
+<h1>День Победы. Промежуточные времена</h1>
+<h3>Данный протокол не является официальным документом</h3>
+<h2>Ж14</h2>
+<table class='rezult'>
+<tr><th>№ п/п </th><th>Номер </th><th>Фамилия, Имя </th><th>Результат </th><th>Место </th><th>Отставание </th><th>#1 (47) </th><th>#F(240) </th></tr>
+<tr><td><nobr>1</td><td><nobr>169</td><td class='cr'><nobr>БАЗИЛЬ<br>ЕВА</td><td><nobr>00:34:36</td><td><nobr>1</td><td><nobr></td><td><nobr>1:30(3)<br></td><td><nobr>34:36(1)<br>0:30(1)</td></tr>
+<tr><td><nobr>2</td><td><nobr>155</td><td class='cr'><nobr>НОВОКШЕНОВА<br>МАРИЯ</td><td><nobr>00:35:50</td><td><nobr>2</td><td><nobr>+1:14</td><td><nobr>1:25(2)<br></td><td><nobr>35:50(2)<br>0:40(2)</td></tr>
+</table>"""
+
 
 def test_detect_protocol_format() -> None:
     assert detect_protocol_format(SAMPLE_PROTOCOL) == "js_course"
@@ -453,6 +464,25 @@ def test_parse_legacy_race_protocol_html() -> None:
     assert participant["splits"][1]["split"]["seconds"] == 116
     assert participant["splits"][1]["split"]["rank"] == 6
     assert participant["splits"][1]["cumulative"]["time"] == "3:24"
+
+
+def test_parse_legacy_race_protocol_html_without_team_column() -> None:
+    protocol = parse_race_protocol_html(LEGACY_PROTOCOL_WITHOUT_TEAM)
+
+    group = protocol.groups[0]
+    assert group["controls"][0] == {
+        "column_index": 6,
+        "label": "1",
+        "code": "47",
+        "distance_meters": None,
+    }
+    participant = group["participants"][0]
+    assert participant["name"] == "БАЗИЛЬ ЕВА"
+    assert participant["bib"] == "169"
+    assert participant["result"] == "00:34:36"
+    assert participant["place"] == "1"
+    assert participant["gap"] == ""
+    assert participant["splits"][0]["cumulative"]["time"] == "1:30"
 
 
 def test_prepare_race_result_view_marks_top_gap_tiers() -> None:
