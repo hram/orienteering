@@ -9,6 +9,7 @@
   const closeButton = document.querySelector("#split-analysis-close");
   const previousButton = document.querySelector("#split-analysis-prev");
   const nextButton = document.querySelector("#split-analysis-next");
+  const orientToggle = document.querySelector("#split-orient-toggle");
   const debugSnapshotButton = document.querySelector("#split-debug-snapshot");
   const drawToggleButton = document.querySelector("#split-draw-toggle");
   const drawClearButton = document.querySelector("#split-draw-clear");
@@ -32,11 +33,18 @@
   let drawMode = false;
   let altRoutePoints = [];
   let altRouteLine = null;
+  let mapLayer = null;
+  let currentProjection = null;
   let drawPointerId = null;
 
   closeButton?.addEventListener("click", close);
   previousButton?.addEventListener("click", () => navigateSplit(-1));
   nextButton?.addEventListener("click", () => navigateSplit(1));
+  orientToggle?.addEventListener("change", () => {
+    if (active) {
+      renderMap();
+    }
+  });
   debugSnapshotButton?.addEventListener("click", openDebugSnapshot);
   modal.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.matches("[data-close-split-analysis]")) {
@@ -126,6 +134,8 @@
     active = null;
     athleteMarker = null;
     altRouteLine = null;
+    mapLayer = null;
+    currentProjection = null;
     altRoutePoints = [];
     drawMode = false;
     drawPointerId = null;
@@ -243,9 +253,20 @@
     const image = active.image;
     const coursePoints = [row.fromControl, ...row.viaControls, row.toControl];
     const trackSegment = splitTrackSegment(row);
-    const focusPoints = [...coursePoints.map(controlPixel), ...trackSegment.map((point) => point.pixel)];
+    const focusPoints = [
+      ...coursePoints.map(controlPixel),
+      ...trackSegment.map((point) => point.pixel),
+      ...altRoutePoints,
+    ];
+    currentProjection = orientToggle?.checked ? splitProjection(row) : null;
     svg.innerHTML = "";
-    svg.setAttribute("viewBox", splitViewBox(focusPoints, image.naturalWidth, image.naturalHeight).join(" "));
+    svg.setAttribute(
+      "viewBox",
+      (currentProjection
+        ? orientedViewBox(focusPoints, currentProjection)
+        : splitViewBox(focusPoints, image.naturalWidth, image.naturalHeight)
+      ).join(" ")
+    );
 
     const mapImage = document.createElementNS("http://www.w3.org/2000/svg", "image");
     mapImage.setAttribute("href", image.currentSrc || image.src);
@@ -254,9 +275,14 @@
     mapImage.setAttribute("width", String(image.naturalWidth));
     mapImage.setAttribute("height", String(image.naturalHeight));
     mapImage.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    svg.appendChild(mapImage);
 
     appendArrowMarker();
+    mapLayer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    if (currentProjection) {
+      mapLayer.setAttribute("transform", projectionMatrix(currentProjection));
+    }
+    mapLayer.appendChild(mapImage);
+    svg.appendChild(mapLayer);
     if (trackSegment.length >= 2) {
       addPolyline(trackSegment.map((point) => point.pixel), "split-track-line");
     }
@@ -266,7 +292,7 @@
     altRouteLine = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
     altRouteLine.setAttribute("class", "split-alt-route-line");
     altRouteLine.setAttribute("fill", "none");
-    svg.appendChild(altRouteLine);
+    mapLayer.appendChild(altRouteLine);
     renderAltRoute();
     coursePoints.forEach((control, index) => {
       addControlMarker(control, index === 0 ? "from" : index === coursePoints.length - 1 ? "to" : "via");
@@ -277,7 +303,7 @@
     athleteMarker.setAttribute("fill", "#18a0fb");
     athleteMarker.setAttribute("stroke", "#ffffff");
     athleteMarker.setAttribute("stroke-width", "4");
-    svg.appendChild(athleteMarker);
+    mapLayer.appendChild(athleteMarker);
     updateAthlete(0);
   }
 
@@ -489,7 +515,7 @@
       polyline.setAttribute("stroke", "#1565c0");
       polyline.setAttribute("stroke-width", "6");
     }
-    svg.appendChild(polyline);
+    (mapLayer || svg).appendChild(polyline);
   }
 
   function addControlMarker(control, role) {
@@ -513,7 +539,7 @@
     label.setAttribute("text-anchor", "middle");
     label.textContent = control.label;
     group.append(circle, label);
-    svg.appendChild(group);
+    (mapLayer || svg).appendChild(group);
   }
 
   function seekToChartPointer(event) {
@@ -697,7 +723,14 @@
     if (!(target instanceof Element)) {
       return false;
     }
-    return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+    if (target.closest("textarea, select, [contenteditable='true']")) {
+      return true;
+    }
+    const input = target.closest("input");
+    if (!(input instanceof HTMLInputElement)) {
+      return false;
+    }
+    return !["checkbox", "radio", "button", "submit", "reset"].includes(input.type);
   }
 
   async function imageElementDataUrl(sourceImage) {
@@ -748,6 +781,75 @@
     maxX = clamp(maxX + padding, 0, imageWidth);
     maxY = clamp(maxY + padding, 0, imageHeight);
     return [minX, minY, Math.max(maxX - minX, minSize), Math.max(maxY - minY, minSize)];
+  }
+
+  function splitProjection(row) {
+    const from = controlPixel(row.fromControl);
+    const to = controlPixel(row.toControl);
+    const dx = to.pixel_x - from.pixel_x;
+    const dy = to.pixel_y - from.pixel_y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1) {
+      return null;
+    }
+    const unit = {x: dx / length, y: dy / length};
+    return {
+      from,
+      unit,
+      perpendicular: {x: -unit.y, y: unit.x},
+      length,
+    };
+  }
+
+  function projectionMatrix(projection) {
+    const p = projection.perpendicular;
+    const v = projection.unit;
+    const from = projection.from;
+    const a = p.x;
+    const b = -v.x;
+    const c = p.y;
+    const d = -v.y;
+    const e = -(a * from.pixel_x + c * from.pixel_y);
+    const f = v.x * from.pixel_x + v.y * from.pixel_y;
+    return `matrix(${a}, ${b}, ${c}, ${d}, ${e}, ${f})`;
+  }
+
+  function projectPoint(point, projection) {
+    const dx = point.pixel_x - projection.from.pixel_x;
+    const dy = point.pixel_y - projection.from.pixel_y;
+    return {
+      pixel_x: dx * projection.perpendicular.x + dy * projection.perpendicular.y,
+      pixel_y: -(dx * projection.unit.x + dy * projection.unit.y),
+    };
+  }
+
+  function unprojectPoint(point, projection) {
+    return {
+      pixel_x:
+        projection.from.pixel_x +
+        point.pixel_x * projection.perpendicular.x -
+        point.pixel_y * projection.unit.x,
+      pixel_y:
+        projection.from.pixel_y +
+        point.pixel_x * projection.perpendicular.y -
+        point.pixel_y * projection.unit.y,
+    };
+  }
+
+  function orientedViewBox(points, projection) {
+    const projected = (points.length ? points : [projection.from]).map((point) => projectPoint(point, projection));
+    const maxAbsX = Math.max(90, ...projected.map((point) => Math.abs(point.pixel_x)));
+    const minY = Math.min(-projection.length, ...projected.map((point) => point.pixel_y));
+    const maxY = Math.max(0, ...projected.map((point) => point.pixel_y));
+    const padding = Math.max(projection.length * 0.18, 60);
+    const width = Math.max(240, maxAbsX * 2 + padding * 2);
+    const height = Math.max(
+      260,
+      projection.length * 1.65,
+      (padding - minY) / 0.72,
+      (maxY + padding) / 0.28
+    );
+    return [-width / 2, -height * 0.72, width, height];
   }
 
   function controlPixel(control) {
@@ -886,6 +988,9 @@
       return null;
     }
     const local = point.matrixTransform(ctm.inverse());
+    if (currentProjection) {
+      return unprojectPoint({pixel_x: local.x, pixel_y: local.y}, currentProjection);
+    }
     return {pixel_x: local.x, pixel_y: local.y};
   }
 

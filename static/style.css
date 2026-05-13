@@ -1030,6 +1030,21 @@ textarea {
   gap: 8px;
 }
 
+.split-orient-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #334147;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.split-orient-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
 .split-analysis-close,
 .split-analysis-icon-button {
   display: inline-grid;

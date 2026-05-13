@@ -235,6 +235,7 @@ def test_training_player_page_renders_after_import_finish() -> None:
     assert "split-analysis-modal" in response.text
     assert "split-analysis-prev" in response.text
     assert "split-analysis-next" in response.text
+    assert "split-orient-toggle" in response.text
     assert "split-debug-snapshot" in response.text
     assert "split-pace-chart" in response.text
     assert "Темп" in response.text
