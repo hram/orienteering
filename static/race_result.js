@@ -19,6 +19,8 @@
   }));
   const hasTrack = trackPoints.length >= 2;
   const splits = window.OrienteeringSplits.calculateSplits(courseControls, trackPoints);
+  const problemToggle = document.querySelector("#race-problem-toggle");
+  const problemPanel = document.querySelector("#race-problem-panel");
 
   document.querySelectorAll(".race-split-analysis-button").forEach((button) => {
     button.addEventListener("click", () => {
@@ -42,8 +44,8 @@
       window.SplitAnalysisDialog.open({
         trainingId,
         row,
-        rows: splits,
-        rowIndex: visitIndex,
+        rows: pagerRowsForScoreVisits(),
+        rowIndex: pagerRowsForScoreVisits().indexOf(row),
         image,
         trackPoints,
         transform,
@@ -73,8 +75,8 @@
       window.SplitAnalysisDialog.open({
         trainingId,
         row,
-        rows: splits,
-        rowIndex,
+        rows: pagerRowsForSplits(),
+        rowIndex: pagerRowsForSplits().indexOf(row),
         image,
         trackPoints,
         transform,
@@ -108,6 +110,33 @@
 
   function normalizeSplitLabel(label) {
     return String(label).trim().toUpperCase() === "F" ? "Ф" : String(label).trim();
+  }
+
+  function problemModeActive() {
+    return Boolean(problemToggle?.checked && problemPanel && !problemPanel.hidden);
+  }
+
+  function pagerRowsForScoreVisits() {
+    if (!problemModeActive()) {
+      return splits;
+    }
+    const rows = Array.from(problemPanel.querySelectorAll(".race-split-analysis-button[data-score-visit-index]"))
+      .map((button) => splits[Number(button.dataset.scoreVisitIndex)])
+      .filter(Boolean);
+    return rows.length ? rows : splits;
+  }
+
+  function pagerRowsForSplits() {
+    if (!problemModeActive()) {
+      return splits;
+    }
+    const rows = Array.from(problemPanel.querySelectorAll(".race-split-analysis-button[data-split-label]"))
+      .map((button) => {
+        const label = normalizeSplitLabel(button.dataset.splitLabel);
+        return splits.find((split) => normalizeSplitLabel(split.label) === label);
+      })
+      .filter(Boolean);
+    return rows.length ? rows : splits;
   }
 
   function buildProtocolSplitRow(label) {
