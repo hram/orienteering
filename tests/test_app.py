@@ -233,6 +233,8 @@ def test_training_player_page_renders_after_import_finish() -> None:
     assert "split_analysis_dialog.js" in response.text
     assert "splits-table-body" in response.text
     assert "split-analysis-modal" in response.text
+    assert "split-analysis-prev" in response.text
+    assert "split-analysis-next" in response.text
     assert "split-debug-snapshot" in response.text
     assert "split-pace-chart" in response.text
     assert "Темп" in response.text

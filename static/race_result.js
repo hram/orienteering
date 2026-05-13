@@ -42,6 +42,8 @@
       window.SplitAnalysisDialog.open({
         trainingId,
         row,
+        rows: splits,
+        rowIndex: visitIndex,
         image,
         trackPoints,
         transform,
@@ -63,13 +65,16 @@
   function openSplitAnalysisByLabel(label) {
     const normalized = normalizeSplitLabel(label);
     if (hasTrack) {
-      const row = splits.find((split) => normalizeSplitLabel(split.label) === normalized);
+      const rowIndex = splits.findIndex((split) => normalizeSplitLabel(split.label) === normalized);
+      const row = splits[rowIndex];
       if (!row || !image) {
         return;
       }
       window.SplitAnalysisDialog.open({
         trainingId,
         row,
+        rows: splits,
+        rowIndex,
         image,
         trackPoints,
         transform,

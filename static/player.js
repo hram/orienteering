@@ -706,7 +706,7 @@
       cells.push(
         appendCell(formatDistance(row.distanceMeters)),
         appendCell(formatPacePerMeter(row.paceSecondsPerMeter)),
-        appendSplitActionCell(row)
+        appendSplitActionCell(row, visibleSplits)
       );
       tr.append(...cells);
       splitsTableBody.appendChild(tr);
@@ -760,7 +760,7 @@
     return td;
   }
 
-  function appendSplitActionCell(row) {
+  function appendSplitActionCell(row, splits) {
     const td = document.createElement("td");
     td.className = "split-action-cell";
     const button = document.createElement("button");
@@ -769,7 +769,7 @@
     button.setAttribute("aria-label", `Анализ сплита ${row.label}`);
     button.title = "Анализ сплита";
     button.addEventListener("click", () => {
-      openSplitAnalysis(row);
+      openSplitAnalysis(row, splits);
     });
     button.appendChild(createSplitAnalysisIcon());
     td.appendChild(button);
@@ -788,10 +788,13 @@
     return svgIcon;
   }
 
-  function openSplitAnalysis(row) {
+  function openSplitAnalysis(row, splits) {
+    const rows = Array.isArray(splits) && splits.length ? splits : calculateSplits();
     window.SplitAnalysisDialog?.open({
       trainingId,
       row,
+      rows,
+      rowIndex: Math.max(rows.indexOf(row), 0),
       image,
       trackPoints,
       transform,

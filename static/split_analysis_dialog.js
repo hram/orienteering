@@ -7,6 +7,8 @@
   const title = document.querySelector("#split-analysis-title");
   const svg = document.querySelector("#split-analysis-svg");
   const closeButton = document.querySelector("#split-analysis-close");
+  const previousButton = document.querySelector("#split-analysis-prev");
+  const nextButton = document.querySelector("#split-analysis-next");
   const debugSnapshotButton = document.querySelector("#split-debug-snapshot");
   const drawToggleButton = document.querySelector("#split-draw-toggle");
   const drawClearButton = document.querySelector("#split-draw-clear");
@@ -33,6 +35,8 @@
   let drawPointerId = null;
 
   closeButton?.addEventListener("click", close);
+  previousButton?.addEventListener("click", () => navigateSplit(-1));
+  nextButton?.addEventListener("click", () => navigateSplit(1));
   debugSnapshotButton?.addEventListener("click", openDebugSnapshot);
   modal.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.matches("[data-close-split-analysis]")) {
@@ -42,6 +46,17 @@
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !modal.hidden) {
       close();
+      return;
+    }
+    if (modal.hidden || isTextEntryTarget(event.target)) {
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      navigateSplit(-1);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      navigateSplit(1);
     }
   });
   chatStartButton?.addEventListener("click", () => {
@@ -88,23 +103,18 @@
     active = {
       trainingId: options.trainingId,
       row: options.row,
+      rows: Array.isArray(options.rows) && options.rows.length ? options.rows : [options.row],
+      rowIndex: Number.isInteger(options.rowIndex) ? options.rowIndex : 0,
       image: options.image,
       trackPoints: options.trackPoints || [],
       transform: options.transform || null,
     };
-    analysisSeconds = 0;
-    altRoutePoints = [];
-    drawMode = false;
-    drawPointerId = null;
-    svg?.classList.remove("is-drawing");
-    if (title) {
-      title.textContent = `Сплит ${active.row.label}`;
+    if (!active.rows[active.rowIndex] || active.rows[active.rowIndex] !== active.row) {
+      const index = active.rows.indexOf(active.row);
+      active.rowIndex = index >= 0 ? index : 0;
+      active.row = active.rows[active.rowIndex] || active.row;
     }
-    resetChat(active.row);
-    renderMap();
-    drawPaceChart();
-    updateDrawButtons();
-    updateRouteStats();
+    activateCurrentSplit();
     modal.hidden = false;
     document.body.classList.add("modal-open");
     chatStartButton?.focus();
@@ -123,8 +133,57 @@
     analysisSeconds = 0;
     destroyPaceChart();
     updateDrawButtons();
+    updatePagerButtons();
     if (routeStats) {
       routeStats.hidden = true;
+    }
+  }
+
+  function navigateSplit(delta) {
+    if (!active || !active.rows?.length) {
+      return;
+    }
+    const nextIndex = active.rowIndex + delta;
+    if (nextIndex < 0 || nextIndex >= active.rows.length) {
+      return;
+    }
+    active.rowIndex = nextIndex;
+    active.row = active.rows[nextIndex];
+    activateCurrentSplit();
+  }
+
+  function activateCurrentSplit() {
+    if (!active) {
+      return;
+    }
+    analysisSeconds = 0;
+    altRoutePoints = [];
+    drawMode = false;
+    drawPointerId = null;
+    svg?.classList.remove("is-drawing");
+    updateTitle();
+    resetChat(active.row);
+    renderMap();
+    drawPaceChart();
+    updateDrawButtons();
+    updateRouteStats();
+    updatePagerButtons();
+  }
+
+  function updateTitle() {
+    if (!title || !active) {
+      return;
+    }
+    title.textContent = `Сплит ${active.row.label}`;
+  }
+
+  function updatePagerButtons() {
+    const count = active?.rows?.length || 0;
+    if (previousButton) {
+      previousButton.disabled = !active || active.rowIndex <= 0;
+    }
+    if (nextButton) {
+      nextButton.disabled = !active || active.rowIndex >= count - 1;
     }
   }
 
@@ -632,6 +691,13 @@
         element.appendChild(document.createTextNode(part));
       }
     }
+  }
+
+  function isTextEntryTarget(target) {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+    return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
   }
 
   async function imageElementDataUrl(sourceImage) {

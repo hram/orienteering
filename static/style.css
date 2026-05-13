@@ -1013,6 +1013,17 @@ textarea {
   font-size: 18px;
 }
 
+.split-analysis-pager {
+  display: grid;
+  grid-template-columns: 32px minmax(110px, auto) 32px;
+  gap: 8px;
+  align-items: center;
+}
+
+.split-analysis-pager h2 {
+  text-align: center;
+}
+
 .split-analysis-actions {
   display: flex;
   align-items: center;
