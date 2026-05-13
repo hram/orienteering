@@ -15,6 +15,7 @@
   const courseControlList = document.querySelector("#course-control-list");
   const result = document.querySelector("#georef-result");
   const courseResult = document.querySelector("#course-result");
+  const uploadStatus = document.querySelector("#map-upload-status");
   const undoButton = document.querySelector("#undo-point");
   const saveButton = document.querySelector("#save-georef");
   const undoCourseControlButton = document.querySelector("#undo-course-control");
@@ -34,7 +35,7 @@
   let courseMarkers = [];
   let courseLine = null;
   let fittingPreview = false;
-  let currentMode = "georef";
+  let currentMode = workspace.dataset.imageUrl ? "georef" : "file";
   let currentTransform = parseExistingObject(workspace.dataset.existingTransform);
   let overlayImage = null;
   let imageView = {
@@ -49,7 +50,7 @@
   uploadForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(uploadForm);
-    result.textContent = "Загружаю карту...";
+    setUploadStatus("Загружаю карту...");
 
     const response = await fetch(`/api/imports/${draftId}/map-image`, {
       method: "POST",
@@ -57,7 +58,7 @@
     });
 
     if (!response.ok) {
-      result.textContent = await response.text();
+      setUploadStatus(await response.text());
       return;
     }
 
@@ -126,6 +127,9 @@
     }
     const pixel = clientPointToImagePixel(event.clientX, event.clientY);
     if (!isPixelInsideImage(pixel)) {
+      return;
+    }
+    if (currentMode === "file") {
       return;
     }
     if (currentMode === "course") {
@@ -204,6 +208,7 @@
     });
   });
 
+  setMode(currentMode);
   initBaseMap();
   updateCourseModeAvailability();
   drawAll();
@@ -246,6 +251,9 @@
     });
 
     leafletMap.on("click", (event) => {
+      if (currentMode === "file") {
+        return;
+      }
       if (!pendingPixel) {
         geoPointLabel.textContent = "Сначала кликните точку на картинке";
         return;
@@ -540,7 +548,7 @@
   }
 
   function setMode(mode) {
-    currentMode = mode === "course" ? "course" : "georef";
+    currentMode = mode === "course" ? "course" : mode === "file" ? "file" : "georef";
     modeTabs.forEach((tab) => {
       tab.classList.toggle("active", tab.dataset.mode === currentMode);
     });
@@ -552,6 +560,11 @@
     });
     pendingPixel = null;
     drawImageMarkers();
+    if (currentMode === "file") {
+      imagePointLabel.textContent = image ? "Картинка карты загружена" : "Загрузите картинку карты";
+      geoPointLabel.textContent = "Базовая карта";
+      return;
+    }
     imagePointLabel.textContent = currentMode === "course"
       ? "Кликните по КП на картинке"
       : "Кликните по ориентиру";
@@ -566,6 +579,16 @@
       return;
     }
     courseTab.disabled = !currentTransform;
+  }
+
+  function setUploadStatus(message) {
+    if (uploadStatus) {
+      uploadStatus.textContent = message;
+      return;
+    }
+    if (result) {
+      result.textContent = message;
+    }
   }
 
   function normalizedCourseControls() {

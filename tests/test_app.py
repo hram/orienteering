@@ -41,6 +41,7 @@ def test_training_import_wizard_starts_with_details_step() -> None:
     assert response.status_code == 200
     assert "Шаг 1 из 3" in response.text
     assert 'action="/trainings/imports"' in response.text
+    assert 'form="training-details-form">К карте' in response.text
 
 
 def test_training_import_form_creates_draft_and_redirects_to_map_step() -> None:
@@ -63,6 +64,24 @@ def test_training_import_form_creates_draft_and_redirects_to_map_step() -> None:
     assert response.headers["location"].endswith("/map")
 
 
+def test_import_map_page_shows_second_step_of_three() -> None:
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/trainings/imports",
+            data={"title": "Map test", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            follow_redirects=False,
+        )
+        response = client.get(create_response.headers["location"])
+
+    assert response.status_code == 200
+    assert "Шаг 2 из 3" in response.text
+    assert 'data-mode="file">Файл' in response.text
+    assert 'id="map-upload-form"' in response.text
+    assert 'class="panel form-stack"' not in response.text
+    assert f'href="{create_response.headers["location"].replace("/map", "/details")}">К деталям' in response.text
+    assert f'href="{create_response.headers["location"].replace("/map", "/track")}">К загрузке трека' in response.text
+
+
 def test_import_track_page_renders() -> None:
     with TestClient(app) as client:
         create_response = client.post(
@@ -74,6 +93,10 @@ def test_import_track_page_renders() -> None:
         response = client.get(f"/trainings/imports/{draft_id}/track")
 
     assert response.status_code == 200
+    assert "Шаг 3 из 3" in response.text
+    assert 'class="shell wide track-shell"' in response.text
+    assert f'href="/trainings/imports/{draft_id}/map">К карте' in response.text
+    assert 'form="finish-import-form">Завершить импорт' in response.text
     assert "Загрузить GPX" in response.text
     assert "splits-table-body" not in response.text
 
@@ -128,7 +151,6 @@ def test_import_track_can_be_deleted_from_draft() -> None:
     assert upload_response.json()["point_count"] == 2
     assert before_delete.status_code == 200
     assert "Удалить трек" in before_delete.text
-    assert "track.gpx" in before_delete.text
     assert delete_response.status_code == 303
     assert delete_response.headers["location"] == f"/trainings/imports/{draft_id}/track"
     assert after_delete.status_code == 200

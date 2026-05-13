@@ -7,26 +7,19 @@
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
-    <main class="shell wide">
+    <main class="shell wide track-shell">
       <header class="topbar">
         <div>
           <h1>Трек прохождения</h1>
-          <p>Шаг 3 из 4: загрузите GPX и проверьте прохождение на карте.</p>
+          <p>Шаг 3 из 3: загрузите GPX и проверьте прохождение на карте.</p>
         </div>
-        <a class="button" href="/trainings/imports/{{ draft.draft_id }}/map">Назад к карте</a>
+        <div class="wizard-nav">
+          <a class="button" href="/trainings/imports/{{ draft.draft_id }}/map">К карте</a>
+          <button class="button primary" type="submit" form="finish-import-form">Завершить импорт</button>
+        </div>
       </header>
 
-      <section class="panel import-summary">
-        <div>
-          <strong>{{ draft.title }}</strong>
-          <span>{{ draft.date }}</span>
-        </div>
-        {% if draft.track_gpx_filename %}
-          <span>{{ draft.track_gpx_filename }}</span>
-        {% endif %}
-      </section>
-
-      <section class="panel form-stack">
+      <section class="panel form-stack track-upload-panel">
         <form id="track-upload-form" class="upload-row">
           <input name="file" type="file" accept=".gpx,application/gpx+xml,text/xml" required>
           <button class="button" type="submit">Загрузить GPX</button>
@@ -37,11 +30,9 @@
               <button class="button" type="submit">Удалить трек</button>
             </form>
           {% endif %}
-          <form method="post" action="/trainings/imports/{{ draft.draft_id }}/finish">
-            <button class="button primary" type="submit">Завершить импорт</button>
-          </form>
         </div>
       </section>
+      <form id="finish-import-form" method="post" action="/trainings/imports/{{ draft.draft_id }}/finish" hidden></form>
 
       <section
         id="track-workspace"

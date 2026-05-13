@@ -13,9 +13,13 @@
           <h1>{{ page_title or "Новая тренировка" }}</h1>
           <p>Шаг 1 из 3: основные данные.</p>
         </div>
+        <div class="wizard-nav">
+          <a class="button" href="/trainings">Отмена</a>
+          <button class="button primary" type="submit" form="training-details-form">К карте</button>
+        </div>
       </header>
 
-      <form class="panel form-stack" method="post" action="{{ form_action or '/trainings/imports' }}">
+      <form id="training-details-form" class="panel form-stack" method="post" action="{{ form_action or '/trainings/imports' }}">
         <label>
           Название
           <input name="title" required placeholder="Лесная тренировка, спринт, старт" value="{{ draft.title or '' }}">
@@ -57,11 +61,6 @@
           </select>
         </label>
         {% endif %}
-
-        <div class="actions">
-          <a class="button" href="/trainings">Отмена</a>
-          <button class="button primary" type="submit">{{ submit_label or "Дальше" }}</button>
-        </div>
       </form>
     </main>
   </body>

@@ -8,31 +8,17 @@
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
-    <main class="shell wide">
+    <main class="shell wide georef-shell">
       <header class="topbar">
         <div>
           <h1>Привязка карты</h1>
-          <p>Шаг 2 из 4: совместите картинку карты с реальными координатами.</p>
+          <p>Шаг 2 из 3: совместите картинку карты с реальными координатами.</p>
         </div>
-        <a class="button" href="/trainings">К тренировкам</a>
+        <div class="wizard-nav">
+          <a class="button" href="/trainings/imports/{{ draft.draft_id }}/details">К деталям</a>
+          <a class="button primary" href="/trainings/imports/{{ draft.draft_id }}/track">К загрузке трека</a>
+        </div>
       </header>
-
-      <section class="panel import-summary">
-        <div>
-          <strong>{{ draft.title }}</strong>
-          <span>{{ draft.date }}</span>
-        </div>
-        {% if draft.location %}
-          <span>{{ draft.location }}</span>
-        {% endif %}
-      </section>
-
-      <section class="panel form-stack">
-        <form id="map-upload-form" class="upload-row">
-          <input name="file" type="file" accept="image/png,image/jpeg,image/webp" required>
-          <button class="button" type="submit">Загрузить карту</button>
-        </form>
-      </section>
 
       <section
         id="georef-workspace"
@@ -72,11 +58,27 @@
 
         <aside class="panel point-sidebar">
           <div class="mode-tabs" role="tablist" aria-label="Режим работы">
-            <button class="mode-tab active" type="button" data-mode="georef">Привязка</button>
+            <button class="mode-tab {% if not draft.map_image_url %}active{% endif %}" type="button" data-mode="file">Файл</button>
+            <button class="mode-tab {% if draft.map_image_url %}active{% endif %}" type="button" data-mode="georef">Привязка</button>
             <button class="mode-tab" type="button" data-mode="course">КП</button>
           </div>
 
-          <div class="mode-panel active" data-panel="georef">
+          <div class="mode-panel {% if not draft.map_image_url %}active{% endif %}" data-panel="file">
+            <h2>Файл карты</h2>
+            <form id="map-upload-form" class="file-upload-form">
+              <input name="file" type="file" accept="image/png,image/jpeg,image/webp" required>
+              <button class="button" type="submit">Загрузить карту</button>
+            </form>
+            <div id="map-upload-status" class="georef-result muted">
+              {% if draft.map_image_url %}
+                Картинка карты загружена.
+              {% else %}
+                Загрузите jpg, png или webp.
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="mode-panel {% if draft.map_image_url %}active{% endif %}" data-panel="georef">
             <h2>Контрольные точки</h2>
             <ol id="control-point-list" class="point-list"></ol>
             <div id="georef-result" class="georef-result muted">Нужно минимум 3 точки.</div>
@@ -93,16 +95,13 @@
             <input id="overlay-opacity" type="range" min="0" max="100" value="55">
           </label>
 
-          <div class="actions mode-actions active" data-actions="georef">
+          <div class="actions mode-actions {% if draft.map_image_url %}active{% endif %}" data-actions="georef">
             <button id="undo-point" class="button" type="button">Убрать последнюю</button>
             <button id="save-georef" class="button primary" type="button">Сохранить привязку</button>
           </div>
           <div class="actions mode-actions" data-actions="course">
             <button id="undo-course-control" class="button" type="button">Убрать последний КП</button>
             <button id="save-course-controls" class="button primary" type="button">Сохранить маршрут</button>
-          </div>
-          <div class="wizard-next">
-            <a class="button primary" href="/trainings/imports/{{ draft.draft_id }}/track">К загрузке трека</a>
           </div>
         </aside>
       </section>
