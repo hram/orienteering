@@ -806,6 +806,33 @@ def test_race_result_can_be_deleted_from_listing(monkeypatch) -> None:
     assert detail_after.status_code == 404
 
 
+def test_race_result_import_is_visible_to_self_participant_user(monkeypatch) -> None:
+    from portal.auth import USER_COOKIE_NAME
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: SAMPLE_PROTOCOL)
+
+    with TestClient(app) as client:
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://example.test/splits.html",
+                "group_name": "Ж14",
+                "self_row_index": "0",
+            },
+            follow_redirects=False,
+        )
+        race_result_id = save.headers["location"].split("/")[-1]
+
+        client.cookies.set(USER_COOKIE_NAME, fetch_user_id("polina"))
+        listing = client.get("/race-results")
+
+    assert save.status_code == 303
+    assert listing.status_code == 200
+    assert f"/race-results/{race_result_id}" in listing.text
+    assert "Храмова Полина" in listing.text
+
+
 def test_training_can_attach_previously_imported_race_result(monkeypatch) -> None:
     from portal.routers import race_results
 

@@ -280,38 +280,17 @@ async def _seed_default_visibility(conn: aiosqlite.Connection) -> None:
         """
     )
     for row in await cursor.fetchall():
-        race_result_id = row["race_result_id"]
-        await conn.execute(
-            """
-            INSERT OR IGNORE INTO race_result_visibility (race_result_id, user_id, created_at)
-            VALUES (?, ?, ?)
-            """,
-            (race_result_id, evgeny_id, now),
-        )
         try:
             participants = json.loads(row["participants"]) if row["participants"] else []
         except (json.JSONDecodeError, TypeError):
             participants = []
-        self_p = next(
-            (p for p in participants if p.get("row_index") == row["self_row_index"]),
-            None,
+        await _seed_race_result_visibility(
+            conn,
+            race_result_id=row["race_result_id"],
+            participants=participants,
+            self_row_index=row["self_row_index"],
+            when=now,
         )
-        if not self_p:
-            continue
-        name = (self_p.get("name") or "").lower()
-        target_user_id = None
-        if "полин" in name:
-            target_user_id = polina_id
-        elif "ольг" in name:
-            target_user_id = olga_id
-        if target_user_id:
-            await conn.execute(
-                """
-                INSERT OR IGNORE INTO race_result_visibility (race_result_id, user_id, created_at)
-                VALUES (?, ?, ?)
-                """,
-                (race_result_id, target_user_id, now),
-            )
 
 
 def serialize_json(value: Any) -> str:
@@ -708,6 +687,13 @@ async def save_race_result(
             kind,
             now,
         ),
+    )
+    await _seed_race_result_visibility(
+        conn,
+        race_result_id=race_result_id,
+        participants=participants,
+        self_row_index=self_row_index,
+        when=now,
     )
     await conn.commit()
     result = await get_race_result(conn, race_result_id)
@@ -1259,6 +1245,41 @@ async def _seed_training_visibility(
             VALUES (?, ?, ?)
             """,
             (training_id, user_id, when),
+        )
+
+
+async def _seed_race_result_visibility(
+    conn: aiosqlite.Connection,
+    *,
+    race_result_id: str,
+    participants: list[dict[str, Any]],
+    self_row_index: int,
+    when: str,
+) -> None:
+    user_ids: set[str] = set()
+    self_participant = next(
+        (participant for participant in participants if participant.get("row_index") == self_row_index),
+        None,
+    )
+    self_name = str((self_participant or {}).get("name") or "").casefold()
+
+    cursor = await conn.execute("SELECT user_id, username, display_name, is_admin FROM users")
+    for row in await cursor.fetchall():
+        if row["is_admin"]:
+            user_ids.add(row["user_id"])
+            continue
+        username = str(row["username"] or "").casefold()
+        display_name = str(row["display_name"] or "").casefold()
+        if self_name and ((display_name and display_name in self_name) or (username and username in self_name)):
+            user_ids.add(row["user_id"])
+
+    for user_id in user_ids:
+        await conn.execute(
+            """
+            INSERT OR IGNORE INTO race_result_visibility (race_result_id, user_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (race_result_id, user_id, when),
         )
 
 
