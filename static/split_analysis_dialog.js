@@ -9,6 +9,8 @@
   const closeButton = document.querySelector("#split-analysis-close");
   const previousButton = document.querySelector("#split-analysis-prev");
   const nextButton = document.querySelector("#split-analysis-next");
+  const reviewReasonSelect = document.querySelector("#split-review-reason");
+  const reviewCustomInput = document.querySelector("#split-review-custom");
   const orientToggle = document.querySelector("#split-orient-toggle");
   const debugSnapshotButton = document.querySelector("#split-debug-snapshot");
   const drawToggleButton = document.querySelector("#split-draw-toggle");
@@ -36,10 +38,24 @@
   let mapLayer = null;
   let currentProjection = null;
   let drawPointerId = null;
+  let errorReasons = [];
+  let reasonsLoaded = false;
+  let reviewSaveTimer = null;
+  let reviewRequestId = 0;
 
   closeButton?.addEventListener("click", close);
   previousButton?.addEventListener("click", () => navigateSplit(-1));
   nextButton?.addEventListener("click", () => navigateSplit(1));
+  reviewReasonSelect?.addEventListener("change", () => {
+    updateReviewCustomVisibility();
+    scheduleSaveReview(0);
+  });
+  reviewCustomInput?.addEventListener("input", () => {
+    scheduleSaveReview(450);
+  });
+  reviewCustomInput?.addEventListener("blur", () => {
+    scheduleSaveReview(0);
+  });
   orientToggle?.addEventListener("change", () => {
     if (active) {
       renderMap();
@@ -110,6 +126,7 @@
     }
     active = {
       trainingId: options.trainingId,
+      raceResultId: options.raceResultId || null,
       row: options.row,
       rows: Array.isArray(options.rows) && options.rows.length ? options.rows : [options.row],
       rowIndex: Number.isInteger(options.rowIndex) ? options.rowIndex : 0,
@@ -131,6 +148,11 @@
   function close() {
     modal.hidden = true;
     document.body.classList.remove("modal-open");
+    if (reviewSaveTimer) {
+      clearTimeout(reviewSaveTimer);
+      reviewSaveTimer = null;
+    }
+    reviewRequestId += 1;
     active = null;
     athleteMarker = null;
     altRouteLine = null;
@@ -178,6 +200,7 @@
     updateDrawButtons();
     updateRouteStats();
     updatePagerButtons();
+    loadReviewForActiveSplit();
   }
 
   function updateTitle() {
@@ -195,6 +218,135 @@
     if (nextButton) {
       nextButton.disabled = !active || active.rowIndex >= count - 1;
     }
+  }
+
+  async function ensureErrorReasons() {
+    if (reasonsLoaded) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/error-reasons");
+      const payload = await response.json();
+      errorReasons = Array.isArray(payload.reasons) ? payload.reasons : [];
+      renderReasonOptions();
+    } catch (_error) {
+      errorReasons = [];
+    } finally {
+      reasonsLoaded = true;
+    }
+  }
+
+  function renderReasonOptions(selectedReasonId = "") {
+    if (!reviewReasonSelect) {
+      return;
+    }
+    const previousValue = selectedReasonId || reviewReasonSelect.value;
+    reviewReasonSelect.innerHTML = "";
+    reviewReasonSelect.appendChild(reasonOption("", "Не выбрана"));
+    errorReasons
+      .filter((reason) => reason.is_active || reason.reason_id === previousValue)
+      .forEach((reason) => {
+        const label = reason.is_active ? reason.label : `${reason.label} (архив)`;
+        reviewReasonSelect.appendChild(reasonOption(reason.reason_id, label));
+      });
+    reviewReasonSelect.appendChild(reasonOption("__custom__", "Свой вариант"));
+    reviewReasonSelect.value = previousValue || "";
+  }
+
+  function reasonOption(value, label) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    return option;
+  }
+
+  async function loadReviewForActiveSplit() {
+    if (!active || !reviewReasonSelect || !reviewCustomInput) {
+      return;
+    }
+    const requestId = ++reviewRequestId;
+    await ensureErrorReasons();
+    if (!active || requestId !== reviewRequestId) {
+      return;
+    }
+    renderReasonOptions();
+    reviewReasonSelect.value = "";
+    reviewCustomInput.value = "";
+    updateReviewCustomVisibility();
+    try {
+      const response = await fetch("/api/split-error-review/get", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(reviewKey(active.row)),
+      });
+      const payload = await response.json();
+      if (!active || requestId !== reviewRequestId) {
+        return;
+      }
+      applyReview(payload.review);
+    } catch (_error) {
+      applyReview(null);
+    }
+  }
+
+  function applyReview(review) {
+    if (!reviewReasonSelect || !reviewCustomInput) {
+      return;
+    }
+    const reasonId = review?.reason_id || "";
+    const customReason = review?.custom_reason || "";
+    renderReasonOptions(reasonId);
+    if (customReason) {
+      reviewReasonSelect.value = "__custom__";
+      reviewCustomInput.value = customReason;
+    } else {
+      reviewReasonSelect.value = reasonId;
+      reviewCustomInput.value = "";
+    }
+    updateReviewCustomVisibility();
+  }
+
+  function updateReviewCustomVisibility() {
+    if (!reviewReasonSelect || !reviewCustomInput) {
+      return;
+    }
+    reviewCustomInput.hidden = reviewReasonSelect.value !== "__custom__";
+  }
+
+  function scheduleSaveReview(delayMs) {
+    if (reviewSaveTimer) {
+      clearTimeout(reviewSaveTimer);
+    }
+    reviewSaveTimer = setTimeout(saveReview, delayMs);
+  }
+
+  async function saveReview() {
+    if (!active || !reviewReasonSelect || !reviewCustomInput) {
+      return;
+    }
+    const selected = reviewReasonSelect.value;
+    const payload = {
+      ...reviewKey(active.row),
+      reason_id: selected && selected !== "__custom__" ? selected : null,
+      custom_reason: selected === "__custom__" ? reviewCustomInput.value.trim() : null,
+    };
+    try {
+      await fetch("/api/split-error-review", {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+      });
+    } catch (_error) {}
+  }
+
+  function reviewKey(row) {
+    return {
+      training_id: active.trainingId,
+      race_result_id: active.raceResultId,
+      split_label: String(row.label),
+      from_control_label: String(row.fromControl.label),
+      to_control_label: String(row.toControl.label),
+    };
   }
 
   function resetChat(row) {

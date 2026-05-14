@@ -13,6 +13,7 @@
       class="shell wide race-result-shell"
       data-reachability-chart='{{ result.reachability_chart | tojson }}'
       {% if training %}
+        data-race-result-id="{{ result.race_result_id }}"
         data-training-id="{{ training.training_id }}"
         data-training-type="{{ training.training_type or '' }}"
         data-transform='{{ training.georef_transform | tojson }}'

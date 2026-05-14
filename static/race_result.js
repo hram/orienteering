@@ -6,6 +6,7 @@
 
   const image = document.querySelector("#race-analysis-map-image");
   const trainingId = workspace.dataset.trainingId;
+  const raceResultId = workspace.dataset.raceResultId || null;
   const trainingType = workspace.dataset.trainingType || "";
   const transform = parseJson(workspace.dataset.transform, null);
   const courseControls = window.OrienteeringSplits.normalizeCourseControls(
@@ -43,6 +44,7 @@
       }
       window.SplitAnalysisDialog.open({
         trainingId,
+        raceResultId,
         row,
         rows: pagerRowsForScoreVisits(),
         rowIndex: pagerRowsForScoreVisits().indexOf(row),
@@ -74,6 +76,7 @@
       }
       window.SplitAnalysisDialog.open({
         trainingId,
+        raceResultId,
         row,
         rows: pagerRowsForSplits(),
         rowIndex: pagerRowsForSplits().indexOf(row),

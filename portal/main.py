@@ -18,7 +18,7 @@ from portal.auth import (
 )
 from portal.db import connect_db, init_db, normalize_db_path
 from portal.infrastructure import config
-from portal.routers import ai, auth as auth_router, georef, imports, race_results
+from portal.routers import ai, auth as auth_router, georef, imports, race_results, settings
 
 
 load_dotenv()
@@ -85,6 +85,7 @@ app.include_router(georef.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
 app.include_router(imports.router)
 app.include_router(race_results.router)
+app.include_router(settings.router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/uploads", StaticFiles(directory=str(Path(config.UPLOAD_DIR).expanduser())), name="uploads")
 

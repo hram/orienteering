@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Причины ошибок</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Причины ошибок</h1>
+          <p>Справочник для разбора проблемных сплитов.</p>
+        </div>
+        <div class="actions">
+          <a class="button" href="/trainings">Тренировки</a>
+          <a class="button" href="/race-results">Протоколы</a>
+          {% include "partials/_user_menu.html" %}
+        </div>
+      </header>
+
+      <section class="panel form-stack">
+        <form class="upload-row" method="post" action="/settings/error-reasons">
+          <input name="label" required placeholder="Новая причина ошибки">
+          <button class="button primary" type="submit">Добавить</button>
+        </form>
+      </section>
+
+      <section class="panel settings-panel">
+        {% if reasons %}
+          <div class="settings-list">
+            {% for reason in reasons %}
+              <form class="settings-row" method="post" action="/settings/error-reasons/{{ reason.reason_id }}">
+                <input name="label" required value="{{ reason.label }}">
+                <label class="settings-checkbox">
+                  <input name="is_active" type="checkbox" value="1" {% if reason.is_active %}checked{% endif %}>
+                  <span>Активна</span>
+                </label>
+                <button class="button compact" type="submit">Сохранить</button>
+              </form>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="muted">Причины ошибок пока не добавлены.</p>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

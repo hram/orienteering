@@ -8,6 +8,14 @@
         <button id="split-analysis-next" class="split-analysis-icon-button" type="button" aria-label="Следующий сплит" title="Следующий сплит">›</button>
       </div>
       <div class="split-analysis-actions">
+        <label class="split-review-control">
+          <span>Причина</span>
+          <select id="split-review-reason">
+            <option value="">Не выбрана</option>
+            <option value="__custom__">Свой вариант</option>
+          </select>
+          <input id="split-review-custom" type="text" placeholder="Своя причина" hidden>
+        </label>
         <label class="split-orient-toggle">
           <input id="split-orient-toggle" type="checkbox">
           <span>По направлению</span>

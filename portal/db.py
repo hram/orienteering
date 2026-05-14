@@ -116,6 +116,31 @@ CREATE TABLE IF NOT EXISTS race_result_visibility (
     FOREIGN KEY (race_result_id) REFERENCES race_results(race_result_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
+
+CREATE TABLE IF NOT EXISTS error_reasons (
+    reason_id  TEXT PRIMARY KEY,
+    label      TEXT NOT NULL,
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS split_error_reviews (
+    review_id          TEXT PRIMARY KEY,
+    training_id        TEXT NOT NULL,
+    race_result_id     TEXT NOT NULL DEFAULT '',
+    split_label        TEXT NOT NULL,
+    from_control_label TEXT NOT NULL,
+    to_control_label   TEXT NOT NULL,
+    reason_id          TEXT,
+    custom_reason      TEXT,
+    reviewed_at        TEXT,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    UNIQUE (training_id, race_result_id, split_label, from_control_label, to_control_label),
+    FOREIGN KEY (reason_id) REFERENCES error_reasons(reason_id)
+);
 """
 
 
@@ -146,6 +171,18 @@ DEFAULT_USERS: tuple[tuple[str, str, bool], ...] = (
     ("evgeny", "Евгений", True),
 )
 
+DEFAULT_ERROR_REASONS: tuple[str, ...] = (
+    "Ошибка направления",
+    "Плохой выбор пути",
+    "Долгий вход в КП",
+    "Остановка на чтение карты",
+    "Потеря контакта с картой",
+    "Ошибка реализации варианта",
+    "Низкий темп без ошибки",
+    "Техническая проблема GPS/карты",
+    "Другое",
+)
+
 
 async def init_db(db_path: str) -> None:
     normalized = normalize_db_path(db_path)
@@ -155,6 +192,7 @@ async def init_db(db_path: str) -> None:
         await conn.executescript(SCHEMA)
         await _migrate_schema(conn)
         await _seed_default_users(conn)
+        await _seed_default_error_reasons(conn)
         await _seed_default_visibility(conn)
         await conn.commit()
     finally:
@@ -183,6 +221,24 @@ async def _seed_default_users(conn: aiosqlite.Connection) -> None:
                 "UPDATE users SET is_admin = ? WHERE username = ?",
                 (admin_flag, username),
             )
+
+
+async def _seed_default_error_reasons(conn: aiosqlite.Connection) -> None:
+    cursor = await conn.execute("SELECT COUNT(*) AS count FROM error_reasons")
+    row = await cursor.fetchone()
+    if row and row["count"] > 0:
+        return
+    now = utc_now_iso()
+    for index, label in enumerate(DEFAULT_ERROR_REASONS):
+        await conn.execute(
+            """
+            INSERT INTO error_reasons (
+                reason_id, label, is_active, sort_order, created_at, updated_at
+            )
+            VALUES (?, ?, 1, ?, ?, ?)
+            """,
+            (uuid4().hex, label, index, now, now),
+        )
 
 
 async def _seed_default_visibility(conn: aiosqlite.Connection) -> None:
@@ -268,6 +324,20 @@ def deserialize_json(value: str | None, default: Any = None) -> Any:
     return json.loads(value)
 
 
+def error_reason_from_row(row: aiosqlite.Row) -> dict[str, Any]:
+    result = dict(row)
+    result["is_active"] = bool(result.get("is_active"))
+    return result
+
+
+def split_error_review_from_row(row: aiosqlite.Row) -> dict[str, Any]:
+    result = dict(row)
+    result["race_result_id"] = result.get("race_result_id") or None
+    if "reason_is_active" in result and result["reason_is_active"] is not None:
+        result["reason_is_active"] = bool(result["reason_is_active"])
+    return result
+
+
 async def _migrate_schema(conn: aiosqlite.Connection) -> None:
     cursor = await conn.execute("PRAGMA table_info(users)")
     user_columns = {row["name"] for row in await cursor.fetchall()}
@@ -328,6 +398,38 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
         await conn.execute("ALTER TABLE race_results ADD COLUMN training_id TEXT")
     if "kind" not in race_result_columns:
         await conn.execute("ALTER TABLE race_results ADD COLUMN kind TEXT NOT NULL DEFAULT 'course'")
+
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS error_reasons (
+            reason_id  TEXT PRIMARY KEY,
+            label      TEXT NOT NULL,
+            is_active  INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS split_error_reviews (
+            review_id          TEXT PRIMARY KEY,
+            training_id        TEXT NOT NULL,
+            race_result_id     TEXT NOT NULL DEFAULT '',
+            split_label        TEXT NOT NULL,
+            from_control_label TEXT NOT NULL,
+            to_control_label   TEXT NOT NULL,
+            reason_id          TEXT,
+            custom_reason      TEXT,
+            reviewed_at        TEXT,
+            created_at         TEXT NOT NULL,
+            updated_at         TEXT NOT NULL,
+            UNIQUE (training_id, race_result_id, split_label, from_control_label, to_control_label),
+            FOREIGN KEY (reason_id) REFERENCES error_reasons(reason_id)
+        )
+        """
+    )
 
 
 async def create_import_draft(
@@ -824,6 +926,178 @@ async def update_training_track_points(
     )
     await conn.commit()
     return await get_training(conn, training_id)
+
+
+async def list_error_reasons(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        """
+        SELECT reason_id, label, is_active, sort_order, created_at, updated_at
+        FROM error_reasons
+        ORDER BY sort_order, label
+        """
+    )
+    return [error_reason_from_row(row) for row in await cursor.fetchall()]
+
+
+async def create_error_reason(conn: aiosqlite.Connection, label: str) -> dict[str, Any]:
+    now = utc_now_iso()
+    cursor = await conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM error_reasons")
+    row = await cursor.fetchone()
+    reason_id = uuid4().hex
+    await conn.execute(
+        """
+        INSERT INTO error_reasons (
+            reason_id, label, is_active, sort_order, created_at, updated_at
+        )
+        VALUES (?, ?, 1, ?, ?, ?)
+        """,
+        (reason_id, label, row["next_order"] if row else 0, now, now),
+    )
+    await conn.commit()
+    reason = await get_error_reason(conn, reason_id)
+    if reason is None:
+        raise RuntimeError("Error reason was not created")
+    return reason
+
+
+async def get_error_reason(conn: aiosqlite.Connection, reason_id: str) -> dict[str, Any] | None:
+    cursor = await conn.execute(
+        "SELECT * FROM error_reasons WHERE reason_id = ?",
+        (reason_id,),
+    )
+    row = await cursor.fetchone()
+    return error_reason_from_row(row) if row else None
+
+
+async def update_error_reason(
+    conn: aiosqlite.Connection,
+    reason_id: str,
+    *,
+    label: str,
+    is_active: bool,
+) -> dict[str, Any] | None:
+    await conn.execute(
+        """
+        UPDATE error_reasons
+        SET label = ?, is_active = ?, updated_at = ?
+        WHERE reason_id = ?
+        """,
+        (label, 1 if is_active else 0, utc_now_iso(), reason_id),
+    )
+    await conn.commit()
+    return await get_error_reason(conn, reason_id)
+
+
+async def get_split_error_review(
+    conn: aiosqlite.Connection,
+    *,
+    training_id: str,
+    race_result_id: str | None,
+    split_label: str,
+    from_control_label: str,
+    to_control_label: str,
+) -> dict[str, Any] | None:
+    cursor = await conn.execute(
+        """
+        SELECT
+            r.*,
+            er.label AS reason_label,
+            er.is_active AS reason_is_active
+        FROM split_error_reviews r
+        LEFT JOIN error_reasons er ON er.reason_id = r.reason_id
+        WHERE r.training_id = ?
+          AND r.race_result_id = ?
+          AND r.split_label = ?
+          AND r.from_control_label = ?
+          AND r.to_control_label = ?
+        """,
+        (
+            training_id,
+            race_result_id or "",
+            split_label,
+            from_control_label,
+            to_control_label,
+        ),
+    )
+    row = await cursor.fetchone()
+    return split_error_review_from_row(row) if row else None
+
+
+async def save_split_error_review(
+    conn: aiosqlite.Connection,
+    *,
+    training_id: str,
+    race_result_id: str | None,
+    split_label: str,
+    from_control_label: str,
+    to_control_label: str,
+    reason_id: str | None,
+    custom_reason: str | None,
+) -> dict[str, Any] | None:
+    now = utc_now_iso()
+    normalized_custom = custom_reason.strip() if custom_reason else None
+    normalized_custom = normalized_custom or None
+    normalized_reason_id = reason_id or None
+    reviewed_at = now if (normalized_reason_id or normalized_custom) else None
+    existing = await get_split_error_review(
+        conn,
+        training_id=training_id,
+        race_result_id=race_result_id,
+        split_label=split_label,
+        from_control_label=from_control_label,
+        to_control_label=to_control_label,
+    )
+    if existing is None:
+        await conn.execute(
+            """
+            INSERT INTO split_error_reviews (
+                review_id, training_id, race_result_id, split_label,
+                from_control_label, to_control_label, reason_id, custom_reason,
+                reviewed_at, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                uuid4().hex,
+                training_id,
+                race_result_id or "",
+                split_label,
+                from_control_label,
+                to_control_label,
+                normalized_reason_id,
+                normalized_custom,
+                reviewed_at,
+                now,
+                now,
+            ),
+        )
+    else:
+        await conn.execute(
+            """
+            UPDATE split_error_reviews
+            SET reason_id = ?,
+                custom_reason = ?,
+                reviewed_at = ?,
+                updated_at = ?
+            WHERE review_id = ?
+            """,
+            (
+                normalized_reason_id,
+                normalized_custom,
+                reviewed_at,
+                now,
+                existing["review_id"],
+            ),
+        )
+    await conn.commit()
+    return await get_split_error_review(
+        conn,
+        training_id=training_id,
+        race_result_id=race_result_id,
+        split_label=split_label,
+        from_control_label=from_control_label,
+        to_control_label=to_control_label,
+    )
 
 
 async def finalize_import_draft(

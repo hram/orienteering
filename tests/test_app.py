@@ -44,6 +44,54 @@ def test_training_import_wizard_starts_with_details_step() -> None:
     assert 'form="training-details-form">К карте' in response.text
 
 
+def test_error_reason_settings_page_renders_and_creates_reason() -> None:
+    with TestClient(app) as client:
+        page = client.get("/settings/error-reasons")
+        create = client.post(
+            "/settings/error-reasons",
+            data={"label": "Проверочная причина"},
+            follow_redirects=False,
+        )
+        after = client.get("/settings/error-reasons")
+
+    assert page.status_code == 200
+    assert "Причины ошибок" in page.text
+    assert "Плохой выбор пути" in page.text
+    assert create.status_code == 303
+    assert create.headers["location"] == "/settings/error-reasons"
+    assert "Проверочная причина" in after.text
+
+
+def test_split_error_review_api_saves_catalog_and_custom_reason() -> None:
+    with TestClient(app) as client:
+        reasons_response = client.get("/api/error-reasons")
+        reason_id = reasons_response.json()["reasons"][0]["reason_id"]
+        key = {
+            "training_id": "training-1",
+            "race_result_id": None,
+            "split_label": "7",
+            "from_control_label": "6",
+            "to_control_label": "7",
+        }
+        save_catalog = client.put(
+            "/api/split-error-review",
+            json={**key, "reason_id": reason_id, "custom_reason": None},
+        )
+        loaded_catalog = client.post("/api/split-error-review/get", json=key)
+        save_custom = client.put(
+            "/api/split-error-review",
+            json={**key, "reason_id": None, "custom_reason": "Свой выбор"},
+        )
+        loaded_custom = client.post("/api/split-error-review/get", json=key)
+
+    assert reasons_response.status_code == 200
+    assert save_catalog.status_code == 200
+    assert loaded_catalog.json()["review"]["reason_id"] == reason_id
+    assert save_custom.status_code == 200
+    assert loaded_custom.json()["review"]["reason_id"] is None
+    assert loaded_custom.json()["review"]["custom_reason"] == "Свой выбор"
+
+
 def test_training_import_form_creates_draft_and_redirects_to_map_step() -> None:
     with TestClient(app) as client:
         response = client.post(
@@ -235,6 +283,8 @@ def test_training_player_page_renders_after_import_finish() -> None:
     assert "split-analysis-modal" in response.text
     assert "split-analysis-prev" in response.text
     assert "split-analysis-next" in response.text
+    assert "split-review-reason" in response.text
+    assert "split-review-custom" in response.text
     assert "split-orient-toggle" in response.text
     assert "split-debug-snapshot" in response.text
     assert "split-pace-chart" in response.text
