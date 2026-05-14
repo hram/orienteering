@@ -215,6 +215,82 @@ h1 {
   padding: 20px;
 }
 
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.dashboard-card {
+  min-width: 0;
+}
+
+.dashboard-split-list {
+  display: grid;
+  gap: 10px;
+}
+
+.dashboard-split-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 34px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid #edf2f4;
+}
+
+.dashboard-split-card:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.dashboard-split-card h3,
+.dashboard-split-card p {
+  margin: 0;
+}
+
+.dashboard-split-card h3 {
+  font-size: 15px;
+}
+
+.dashboard-split-card p {
+  color: #334147;
+  font-size: 14px;
+}
+
+.dashboard-split-meta {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.problem-split-table-wrap {
+  overflow-x: auto;
+}
+
+.problem-split-table {
+  width: 100%;
+  min-width: 780px;
+  border-collapse: collapse;
+}
+
+.problem-split-table th,
+.problem-split-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid #e6eef1;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.problem-split-table th {
+  color: #6b7980;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .button {
   display: inline-flex;
   min-height: 40px;
@@ -1883,11 +1959,22 @@ textarea {
 
 @media (max-width: 640px) {
   .topbar,
+  .dashboard-grid,
   .import-summary,
   .upload-row,
   .settings-row {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .dashboard-split-card {
+    grid-template-columns: minmax(0, 1fr) 34px;
+  }
+
+  .dashboard-split-meta {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-items: start;
   }
 
   .wizard-nav {

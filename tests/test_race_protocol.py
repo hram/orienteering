@@ -771,6 +771,78 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert f"/trainings/{training_id}/race-result/import" not in trainings_after_save.text
 
 
+def test_dashboard_problem_splits_panel_renders(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: SAMPLE_PROTOCOL)
+    controls = [
+        {"index": index + 1, "pixel_x": index * 100, "pixel_y": 0, "lat": 60.0, "lon": 30.0 + index * 0.001}
+        for index in range(11)
+    ]
+    track_points = [
+        {"lat": 60.0, "lon": 30.0 + index * 0.001, "ele": 10.0, "time": f"2026-04-29T10:00:{index:02d}Z"}
+        for index in range(11)
+    ]
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/trainings/imports",
+            data={"title": "Dashboard problems", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            follow_redirects=False,
+        )
+        draft_id = create_response.headers["location"].split("/")[3]
+        client.post(
+            f"/api/imports/{draft_id}/map-image",
+            files={"file": ("map.png", b"fake-map", "image/png")},
+        )
+        client.post(
+            f"/api/imports/{draft_id}/georef",
+            json={
+                "control_points": [
+                    {"pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"pixel_x": 1000, "pixel_y": 0, "lat": 60.0, "lon": 30.01},
+                    {"pixel_x": 0, "pixel_y": 1000, "lat": 59.99, "lon": 30.0},
+                ]
+            },
+        )
+        client.post(f"/api/imports/{draft_id}/course-controls", json={"controls": controls})
+        client.post(f"/trainings/imports/{draft_id}/finish", follow_redirects=False)
+        trainings = client.get("/trainings")
+        match = re.search(
+            r"Dashboard problems.*?/trainings/([0-9a-f]+)/race-result/import",
+            trainings.text,
+            re.S,
+        )
+        assert match is not None
+        training_id = match.group(1)
+        client.post(f"/api/trainings/{training_id}/track-points", json={"track_points": track_points})
+        save = client.post(
+            f"/trainings/{training_id}/race-result/import/save",
+            data={
+                "url": "https://example.test/splits.html",
+                "group_name": "Ж14",
+                "self_row_index": "0",
+            },
+            follow_redirects=False,
+        )
+        dashboard = client.get("/")
+        all_splits = client.get("/problem-splits")
+
+    assert save.status_code == 303
+    assert dashboard.status_code == 200
+    assert "dashboard-grid" in dashboard.text
+    assert "Сплиты на анализ" in dashboard.text
+    assert "Все сплиты" in dashboard.text
+    assert "Dashboard problems" in dashboard.text
+    assert "split-analysis-button" in dashboard.text
+    assert "dashboard_problem_splits.js" in dashboard.text
+    assert "split-analysis-modal" in dashboard.text
+    assert all_splits.status_code == 200
+    assert "Все проблемные сплиты" in all_splits.text
+    assert "problem-split-table" in all_splits.text
+    assert "split-analysis-button" in all_splits.text
+
+
 def test_race_result_can_be_deleted_from_listing(monkeypatch) -> None:
     from portal.routers import race_results
 

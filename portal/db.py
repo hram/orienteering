@@ -625,6 +625,59 @@ async def list_race_results(
     return results
 
 
+async def list_dashboard_race_results(
+    conn: aiosqlite.Connection,
+    *,
+    viewer_user_id: str | None = None,
+) -> list[dict[str, Any]]:
+    base_sql = """
+        SELECT
+            race_results.*,
+            trainings.title AS training_title,
+            trainings.date AS training_date,
+            trainings.training_type AS training_type,
+            trainings.course_controls AS training_course_controls,
+            trainings.track_points AS training_track_points,
+            maps.image_path AS map_image_path,
+            map_georeferences.transform AS georef_transform
+        FROM race_results
+        JOIN trainings ON trainings.training_id = race_results.training_id
+        LEFT JOIN maps ON maps.map_id = trainings.map_id
+        LEFT JOIN map_georeferences ON map_georeferences.map_id = trainings.map_id
+    """
+    if viewer_user_id is None:
+        cursor = await conn.execute(
+            base_sql + " ORDER BY trainings.date DESC, race_results.created_at DESC"
+        )
+    else:
+        cursor = await conn.execute(
+            base_sql
+            + """
+            JOIN training_visibility tv
+              ON tv.training_id = trainings.training_id AND tv.user_id = ?
+            JOIN race_result_visibility rv
+              ON rv.race_result_id = race_results.race_result_id AND rv.user_id = ?
+            ORDER BY trainings.date DESC, race_results.created_at DESC
+            """,
+            (viewer_user_id, viewer_user_id),
+        )
+    rows = await cursor.fetchall()
+    results = []
+    for row in rows:
+        result = race_result_from_row(row)
+        result["participant_count"] = len(result["participants"])
+        result["self_participant"] = _self_participant(result)
+        result["training_title"] = row["training_title"]
+        result["training_date"] = row["training_date"]
+        result["training_type"] = row["training_type"]
+        result["training_course_controls"] = deserialize_json(row["training_course_controls"], [])
+        result["training_track_points"] = deserialize_json(row["training_track_points"], [])
+        result["map_image_path"] = row["map_image_path"]
+        result["georef_transform"] = deserialize_json(row["georef_transform"], None)
+        results.append(result)
+    return results
+
+
 async def list_attachable_race_results(
     conn: aiosqlite.Connection,
     training_id: str,

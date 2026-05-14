@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Сплиты на анализ</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Сплиты на анализ</h1>
+          <p>Проблемные сплиты по всем видимым тренировкам.</p>
+        </div>
+        <div class="actions">
+          <a class="button" href="/">К дашборду</a>
+          <a class="button primary" href="/trainings">Тренировки</a>
+          {% include "partials/_user_menu.html" %}
+        </div>
+      </header>
+
+      <section
+        id="dashboard-problem-workspace"
+        class="panel"
+        data-dashboard='{{ {"trainings": dashboard_training_data, "splits": problem_splits} | tojson }}'
+      >
+        <div class="pane-header">
+          <div>
+            <h2>Все проблемные сплиты</h2>
+            <p class="muted">{{ problem_split_total }} сплитов отсортированы по отставанию от лидера</p>
+          </div>
+        </div>
+        {% if problem_splits %}
+          <div class="problem-split-table-wrap">
+            <table class="problem-split-table">
+              <thead>
+                <tr>
+                  <th>Тренировка</th>
+                  <th>Время</th>
+                  <th>Лидер</th>
+                  <th>Отст.</th>
+                  <th aria-label="Действия"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for split in problem_splits %}
+                  <tr>
+                    <td>
+                      <div>{{ split.training_title }}</div>
+                      {% if split.training_date %}<small class="muted">{{ split.training_date }}</small>{% endif %}
+                    </td>
+                    <td>{{ split.split_time }}</td>
+                    <td>{{ split.leader_time }}</td>
+                    <td><span class="race-split-gap race-split-gap-hot">{{ split.gap_text }}</span></td>
+                    <td>
+                      <button
+                        class="split-analysis-button"
+                        type="button"
+                        data-problem-index="{{ split.problem_index }}"
+                        aria-label="Анализ сплита {{ split.split_label }}"
+                        title="Анализ сплита"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <polyline points="4 16 9 11 13 14 20 7"></polyline>
+                          <path d="M4 20h16"></path>
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="muted">Пока нет проблемных сплитов с привязанной картой и треком.</p>
+        {% endif %}
+      </section>
+    </main>
+
+    {% include "partials/split_analysis_dialog.html" %}
+    <script src="/static/splits.js"></script>
+    <script src="/static/split_analysis_dialog.js"></script>
+    <script src="/static/dashboard_problem_splits.js"></script>
+  </body>
+</html>

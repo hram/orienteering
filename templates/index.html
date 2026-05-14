@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Orienteering Portal</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <div>
-          <h1>Orienteering Portal</h1>
+          <h1>Дашборд</h1>
           <p>Тренировки, карты и разбор ориентирования.</p>
         </div>
         <div class="actions">
@@ -20,13 +21,35 @@
         </div>
       </header>
 
-      <section class="panel">
-        <h2>Геопривязка карты</h2>
-        <p>
-          Первый технический модуль: по контрольным точкам на картинке карты
-          вычислять преобразование из пикселей в широту и долготу.
-        </p>
+      <section
+        id="dashboard-problem-workspace"
+        class="dashboard-grid"
+        data-dashboard='{{ {"trainings": dashboard_training_data, "splits": problem_splits} | tojson }}'
+      >
+        <article class="panel dashboard-card">
+          <div class="pane-header">
+            <div>
+              <h2>Сплиты на анализ</h2>
+              <p class="muted">{{ problem_split_total }} проблемных сплитов</p>
+            </div>
+            <a class="button compact" href="/problem-splits">Все сплиты</a>
+          </div>
+          {% if problem_splits %}
+            <div class="dashboard-split-list">
+              {% for split in problem_splits %}
+                {% include "partials/problem_split_card.html" %}
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="muted">Пока нет проблемных сплитов с привязанной картой и треком.</p>
+          {% endif %}
+        </article>
       </section>
     </main>
+
+    {% include "partials/split_analysis_dialog.html" %}
+    <script src="/static/splits.js"></script>
+    <script src="/static/split_analysis_dialog.js"></script>
+    <script src="/static/dashboard_problem_splits.js"></script>
   </body>
 </html>

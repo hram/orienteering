@@ -16,7 +16,7 @@ from portal.auth import (
     fetch_user_by_id,
     fetch_user_by_username,
 )
-from portal.db import connect_db, init_db, normalize_db_path
+from portal.db import connect_db, init_db, list_dashboard_race_results, normalize_db_path
 from portal.infrastructure import config
 from portal.routers import ai, auth as auth_router, georef, imports, race_results, settings
 
@@ -30,6 +30,7 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+DASHBOARD_PROBLEM_LIMIT = 6
 
 
 @asynccontextmanager
@@ -92,9 +93,174 @@ app.mount("/uploads", StaticFiles(directory=str(Path(config.UPLOAD_DIR).expandus
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(request, "index.html", {})
+    dashboard = await _dashboard_context(request, limit=DASHBOARD_PROBLEM_LIMIT)
+    return templates.TemplateResponse(request, "index.html", dashboard)
+
+
+@app.get("/problem-splits", response_class=HTMLResponse)
+async def problem_splits_page(request: Request) -> HTMLResponse:
+    dashboard = await _dashboard_context(request, limit=None)
+    return templates.TemplateResponse(request, "problem_splits.html", dashboard)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon() -> FileResponse:
     return FileResponse(STATIC_DIR / "favicon.ico")
+
+
+async def _dashboard_context(request: Request, *, limit: int | None) -> dict:
+    user = request.state.user
+    viewer_user_id = None if user.is_admin else user.user_id
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        sources = await list_dashboard_race_results(conn, viewer_user_id=viewer_user_id)
+    finally:
+        await conn.close()
+    problem_splits, trainings = _build_problem_splits(sources)
+    visible_splits = problem_splits[:limit] if limit is not None else problem_splits
+    visible_training_ids = {split["training_id"] for split in visible_splits}
+    return {
+        "problem_splits": visible_splits,
+        "problem_split_total": len(problem_splits),
+        "dashboard_training_data": {
+            training_id: training
+            for training_id, training in trainings.items()
+            if training_id in visible_training_ids
+        },
+    }
+
+
+def _build_problem_splits(sources: list[dict]) -> tuple[list[dict], dict[str, dict]]:
+    problem_splits: list[dict] = []
+    trainings: dict[str, dict] = {}
+    for result in sources:
+        training_id = result.get("training_id")
+        if not training_id or not _dashboard_training_ready(result):
+            continue
+        trainings.setdefault(training_id, _dashboard_training_payload(result))
+        if result.get("kind") == "score":
+            _append_score_problem_splits(problem_splits, result)
+        else:
+            _append_course_problem_splits(problem_splits, result)
+    problem_splits.sort(key=lambda item: item["gap_seconds"], reverse=True)
+    for index, item in enumerate(problem_splits):
+        item["problem_index"] = index
+    return problem_splits, trainings
+
+
+def _dashboard_training_ready(result: dict) -> bool:
+    return bool(
+        result.get("map_image_path")
+        and result.get("georef_transform")
+        and result.get("training_course_controls")
+        and result.get("training_track_points")
+    )
+
+
+def _dashboard_training_payload(result: dict) -> dict:
+    return {
+        "training_id": result["training_id"],
+        "training_type": result.get("training_type") or "",
+        "map_image_url": _map_image_url(result.get("map_image_path")),
+        "course_controls": result.get("training_course_controls") or [],
+        "track_points": result.get("training_track_points") or [],
+        "transform": result.get("georef_transform"),
+    }
+
+
+def _append_course_problem_splits(items: list[dict], result: dict) -> None:
+    race_results._prepare_race_result_view(result)
+    self_participant = result.get("self_participant")
+    if not self_participant:
+        return
+    leader_splits = race_results._leader_split_seconds_by_split(result.get("participants", []))
+    for split_index in result.get("problem_split_indexes", []):
+        splits = self_participant.get("splits", [])
+        if split_index >= len(splits):
+            continue
+        split = splits[split_index]
+        split_time = race_results._split_stage_time(split, split_index) or {}
+        seconds = split_time.get("seconds")
+        leader_seconds = leader_splits[split_index] if split_index < len(leader_splits) else None
+        if seconds is None or leader_seconds is None:
+            continue
+        gap_seconds = seconds - leader_seconds
+        if gap_seconds <= 0:
+            continue
+        items.append(_problem_split_payload(result, split_index, split.get("label", ""), split_time, leader_seconds, gap_seconds))
+
+
+def _append_score_problem_splits(items: list[dict], result: dict) -> None:
+    race_results._prepare_score_result_view(result)
+    self_participant = result.get("self_participant")
+    if not self_participant:
+        return
+    for visit_index in result.get("problem_visit_indexes", []):
+        visits = self_participant.get("visits", [])
+        if visit_index >= len(visits):
+            continue
+        visit = visits[visit_index]
+        split = visit.get("split") or {}
+        seconds = split.get("seconds")
+        leader_seconds = visit.get("best_leg_seconds")
+        if seconds is None or leader_seconds is None:
+            continue
+        gap_seconds = seconds - leader_seconds
+        if gap_seconds <= 0:
+            continue
+        label = visit.get("code") or str(visit_index + 1)
+        items.append(_problem_split_payload(result, visit_index, label, split, leader_seconds, gap_seconds))
+
+
+def _problem_split_payload(
+    result: dict,
+    split_index: int,
+    label: str,
+    split_time: dict,
+    leader_seconds: int,
+    gap_seconds: int,
+) -> dict:
+    return {
+        "training_id": result["training_id"],
+        "race_result_id": result["race_result_id"],
+        "split_index": split_index,
+        "split_label": str(label),
+        "gap_seconds": gap_seconds,
+        "gap_text": race_results._compact_gap(gap_seconds),
+        "split_time": _compact_split_time(split_time),
+        "leader_time": race_results._format_seconds_to_time(leader_seconds),
+        "training_title": result.get("training_title") or "Тренировка",
+        "training_date": result.get("training_date") or "",
+        "event_name": result.get("event_name") or "",
+        "group_name": result.get("group_name") or "",
+    }
+
+
+def _compact_split_time(split_time: dict) -> str:
+    seconds = split_time.get("seconds")
+    if seconds is not None:
+        return _format_minutes_seconds(seconds)
+    value = split_time.get("short_time") or split_time.get("time")
+    if not value:
+        return ""
+    parsed_seconds = race_results._result_seconds(value)
+    return _format_minutes_seconds(parsed_seconds) if parsed_seconds is not None else value
+
+
+def _format_minutes_seconds(seconds: int) -> str:
+    total = max(int(seconds), 0)
+    minutes = total // 60
+    rest = total % 60
+    return f"{minutes:02d}:{rest:02d}"
+
+
+def _map_image_url(image_path: str | None) -> str | None:
+    if not image_path:
+        return None
+    upload_root = Path(config.UPLOAD_DIR).expanduser().resolve()
+    resolved_image = Path(image_path).expanduser().resolve()
+    try:
+        relative = resolved_image.relative_to(upload_root)
+    except ValueError:
+        return None
+    return f"/uploads/{relative.as_posix()}"

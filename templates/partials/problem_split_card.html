@@ -1,0 +1,24 @@
+<article class="dashboard-split-card">
+  <div>
+    <h3>Сплит {{ split.split_label }}</h3>
+    <p>{{ split.training_title }}</p>
+    {% if split.training_date %}<small class="muted">{{ split.training_date }}</small>{% endif %}
+  </div>
+  <div class="dashboard-split-meta">
+    <span>{{ split.split_time }}</span>
+    <span class="muted">{{ split.leader_time }}</span>
+    <strong class="race-split-gap race-split-gap-hot">{{ split.gap_text }}</strong>
+  </div>
+  <button
+    class="split-analysis-button"
+    type="button"
+    data-problem-index="{{ split.problem_index }}"
+    aria-label="Анализ сплита {{ split.split_label }}"
+    title="Анализ сплита"
+  >
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <polyline points="4 16 9 11 13 14 20 7"></polyline>
+      <path d="M4 20h16"></path>
+    </svg>
+  </button>
+</article>
