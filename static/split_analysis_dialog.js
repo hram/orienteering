@@ -325,17 +325,24 @@
       return;
     }
     const selected = reviewReasonSelect.value;
+    const problemIndex = active.row.__problemIndex;
     const payload = {
       ...reviewKey(active.row),
       reason_id: selected && selected !== "__custom__" ? selected : null,
       custom_reason: selected === "__custom__" ? reviewCustomInput.value.trim() : null,
     };
     try {
-      await fetch("/api/split-error-review", {
+      const response = await fetch("/api/split-error-review", {
         method: "PUT",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(payload),
       });
+      const result = await response.json();
+      if (result.review?.reviewed_at && problemIndex !== undefined) {
+        root.dispatchEvent(new CustomEvent("orienteering:split-reviewed", {
+          detail: {problemIndex},
+        }));
+      }
     } catch (_error) {}
   }
 

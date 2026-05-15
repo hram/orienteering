@@ -187,6 +187,8 @@ def _append_course_problem_splits(items: list[dict], result: dict) -> None:
         gap_seconds = seconds - leader_seconds
         if gap_seconds <= 0:
             continue
+        if _is_reviewed_problem_split(result, split_index):
+            continue
         items.append(_problem_split_payload(result, split_index, split.get("label", ""), split_time, leader_seconds, gap_seconds))
 
 
@@ -208,8 +210,68 @@ def _append_score_problem_splits(items: list[dict], result: dict) -> None:
         gap_seconds = seconds - leader_seconds
         if gap_seconds <= 0:
             continue
+        if _is_reviewed_problem_split(result, visit_index):
+            continue
         label = visit.get("code") or str(visit_index + 1)
         items.append(_problem_split_payload(result, visit_index, label, split, leader_seconds, gap_seconds))
+
+
+def _is_reviewed_problem_split(result: dict, split_index: int) -> bool:
+    reviewed_keys = result.get("reviewed_split_keys") or set()
+    if not reviewed_keys:
+        return False
+    key = _dashboard_review_key(result, split_index)
+    return key in reviewed_keys if key else False
+
+
+def _dashboard_review_key(result: dict, split_index: int) -> tuple[str, str, str] | None:
+    controls = _normalized_dashboard_controls(
+        result.get("training_course_controls") or [],
+        is_rogaine=result.get("training_type") == "rogaine",
+    )
+    split_controls = [control for control in controls if control["kind"] != "start-point"]
+    if split_index < 0 or split_index + 1 >= len(split_controls):
+        return None
+    from_control = split_controls[split_index]
+    to_control = split_controls[split_index + 1]
+    return (
+        str(to_control["label"]),
+        str(from_control["label"]),
+        str(to_control["label"]),
+    )
+
+
+def _normalized_dashboard_controls(controls: list[dict], *, is_rogaine: bool) -> list[dict]:
+    total = len(controls)
+    return [
+        {
+            **control,
+            "index": index + 1,
+            "label": _dashboard_control_label(index, total, is_rogaine=is_rogaine),
+            "kind": _dashboard_control_kind(index, total, is_rogaine=is_rogaine),
+        }
+        for index, control in enumerate(controls)
+    ]
+
+
+def _dashboard_control_label(index: int, total: int, *, is_rogaine: bool) -> str:
+    if index == 0:
+        return "С"
+    if not is_rogaine and total > 2 and index == 1:
+        return "К"
+    if total > 1 and index == total - 1:
+        return "Ф"
+    return str(index if is_rogaine else index - 1)
+
+
+def _dashboard_control_kind(index: int, total: int, *, is_rogaine: bool) -> str:
+    if index == 0:
+        return "start"
+    if not is_rogaine and total > 2 and index == 1:
+        return "start-point"
+    if total > 1 and index == total - 1:
+        return "finish"
+    return "control"
 
 
 def _problem_split_payload(

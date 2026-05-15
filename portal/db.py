@@ -674,8 +674,35 @@ async def list_dashboard_race_results(
         result["training_track_points"] = deserialize_json(row["training_track_points"], [])
         result["map_image_path"] = row["map_image_path"]
         result["georef_transform"] = deserialize_json(row["georef_transform"], None)
+        result["reviewed_split_keys"] = await _list_reviewed_split_keys(
+            conn,
+            training_id=result["training_id"],
+            race_result_id=result["race_result_id"],
+        )
         results.append(result)
     return results
+
+
+async def _list_reviewed_split_keys(
+    conn: aiosqlite.Connection,
+    *,
+    training_id: str,
+    race_result_id: str,
+) -> set[tuple[str, str, str]]:
+    cursor = await conn.execute(
+        """
+        SELECT split_label, from_control_label, to_control_label
+        FROM split_error_reviews
+        WHERE training_id = ?
+          AND race_result_id = ?
+          AND reviewed_at IS NOT NULL
+        """,
+        (training_id, race_result_id or ""),
+    )
+    return {
+        (row["split_label"], row["from_control_label"], row["to_control_label"])
+        for row in await cursor.fetchall()
+    }
 
 
 async def list_attachable_race_results(

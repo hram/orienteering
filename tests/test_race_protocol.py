@@ -843,6 +843,71 @@ def test_dashboard_problem_splits_panel_renders(monkeypatch) -> None:
     assert "split-analysis-button" in all_splits.text
 
 
+def test_dashboard_problem_splits_excludes_reviewed_split() -> None:
+    from portal.main import _build_problem_splits
+
+    controls = [
+        {"lat": 60.0, "lon": 30.0 + index * 0.001}
+        for index in range(7)
+    ]
+    track_points = [
+        {"lat": 60.0, "lon": 30.0 + index * 0.001, "time": f"2026-04-29T10:00:{index:02d}Z"}
+        for index in range(7)
+    ]
+    result = {
+        "training_id": "training-1",
+        "race_result_id": "race-result-1",
+        "source_url": "https://example.test/splits.html",
+        "event_name": "Dashboard review",
+        "event_meta": "",
+        "group_name": "Ж14",
+        "group_subtitle": "",
+        "controls": [],
+        "participants": [
+            {
+                "row_index": 0,
+                "result": "00:02:30",
+                "splits": [
+                    {"label": "1", "cumulative": {"seconds": 10}},
+                    {"label": "2", "split": {"seconds": 10}},
+                    {"label": "3", "split": {"seconds": 10}},
+                    {"label": "4", "split": {"seconds": 110}},
+                    {"label": "Ф", "split": {"seconds": 10}},
+                ],
+            },
+            {
+                "row_index": 1,
+                "result": "00:00:50",
+                "splits": [
+                    {"label": "1", "cumulative": {"seconds": 10}},
+                    {"label": "2", "split": {"seconds": 10}},
+                    {"label": "3", "split": {"seconds": 10}},
+                    {"label": "4", "split": {"seconds": 10}},
+                    {"label": "Ф", "split": {"seconds": 10}},
+                ],
+            },
+        ],
+        "self_row_index": 0,
+        "kind": "course",
+        "training_title": "Dashboard problems",
+        "training_date": "2026-04-29",
+        "training_type": "race",
+        "training_course_controls": controls,
+        "training_track_points": track_points,
+        "map_image_path": "/tmp/map.png",
+        "georef_transform": {"lon_a": 1, "lon_b": 0, "lon_c": 0, "lat_a": 0, "lat_b": 1, "lat_c": 0},
+        "self_participant": None,
+    }
+    result["self_participant"] = result["participants"][0]
+
+    problem_splits, _ = _build_problem_splits([result])
+    reviewed_result = {**result, "reviewed_split_keys": {("4", "3", "4")}}
+    reviewed_problem_splits, _ = _build_problem_splits([reviewed_result])
+
+    assert [split["split_label"] for split in problem_splits] == ["4"]
+    assert reviewed_problem_splits == []
+
+
 def test_race_result_can_be_deleted_from_listing(monkeypatch) -> None:
     from portal.routers import race_results
 

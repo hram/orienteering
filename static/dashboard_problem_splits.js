@@ -20,6 +20,24 @@
     });
   });
 
+  window.addEventListener("orienteering:split-reviewed", (event) => {
+    const problemIndex = Number(event.detail?.problemIndex);
+    if (!Number.isFinite(problemIndex)) {
+      return;
+    }
+    const button = workspace.querySelector(`.split-analysis-button[data-problem-index="${problemIndex}"]`);
+    const row = button?.closest(".dashboard-split-card, tr");
+    if (row) {
+      row.remove();
+    }
+    const index = problemSplits.findIndex((split) => split.problem_index === problemIndex);
+    if (index >= 0) {
+      problemSplits.splice(index, 1);
+    }
+    rowCache.clear();
+    updateProblemTotal();
+  });
+
   function openProblemSplit(item) {
     const training = trainings[item.training_id];
     if (!training?.map_image_url) {
@@ -96,6 +114,20 @@
     image.src = training.map_image_url;
     imageCache.set(training.training_id, image);
     return image;
+  }
+
+  function updateProblemTotal() {
+    const summary = workspace.querySelector(".pane-header .muted");
+    if (!summary) {
+      return;
+    }
+    const currentCount = Number.parseInt(summary.textContent, 10);
+    const nextCount = Number.isFinite(currentCount) ? Math.max(currentCount - 1, 0) : problemSplits.length;
+    if (workspace.classList.contains("dashboard-grid")) {
+      summary.textContent = `${nextCount} проблемных сплитов`;
+    } else {
+      summary.textContent = `${nextCount} сплитов отсортированы по отставанию от лидера`;
+    }
   }
 
   function geoToPixel(point, transform) {
