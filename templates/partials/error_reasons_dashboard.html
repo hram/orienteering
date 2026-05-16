@@ -1,0 +1,82 @@
+<article
+  class="panel dashboard-card error-reasons-card"
+  data-error-reasons='{{ error_reason_stats | tojson }}'
+>
+  <div class="pane-header">
+    <div>
+      <h2>Причины ошибок</h2>
+      <p class="muted">
+        {{ error_reason_stats.total }} разобранных сплитов · {{ error_reason_stats.start_count }} стартов
+      </p>
+    </div>
+    <div class="actions">
+      <a class="button compact" href="/reviewed-splits">Все сплиты</a>
+      <a class="button compact" href="/settings/error-reasons">Настройки</a>
+    </div>
+  </div>
+
+  {% if error_reason_stats.reasons %}
+    <div class="error-reasons-tabs" role="tablist" aria-label="Вид статистики причин ошибок">
+      <button
+        class="error-reasons-tab active"
+        type="button"
+        role="tab"
+        aria-selected="true"
+        aria-controls="error-reasons-top"
+        data-error-reasons-tab="top"
+      >
+        Топ проблем
+      </button>
+      <button
+        class="error-reasons-tab"
+        type="button"
+        role="tab"
+        aria-selected="false"
+        aria-controls="error-reasons-trend"
+        data-error-reasons-tab="trend"
+      >
+        Динамика
+      </button>
+    </div>
+
+    <section class="error-reasons-section active" id="error-reasons-top" role="tabpanel">
+      {% if error_reason_stats.top_reason %}
+        <div class="error-reasons-badge">
+          <span aria-hidden="true">!</span>
+          главная проблема: {{ error_reason_stats.top_reason.label | lower }}
+        </div>
+      {% endif %}
+      <div class="error-reasons-bars">
+        {% set top_count = error_reason_stats.top_reason.count if error_reason_stats.top_reason else 1 %}
+        {% for reason in error_reason_stats.reasons %}
+          <a class="error-reasons-bar-row" href="{{ reason.url }}">
+            <span class="error-reasons-bar-label" title="{{ reason.label }}">{{ reason.label }}</span>
+            <div class="error-reasons-bar-track">
+              <div
+                class="error-reasons-bar-fill"
+                style="width: {{ (reason.count / top_count * 100) | round | int }}%; background: {{ reason.color }};"
+              ></div>
+            </div>
+            <span class="error-reasons-bar-count">{{ reason.count }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="error-reasons-section" id="error-reasons-trend" role="tabpanel" hidden>
+      <div class="error-reasons-chart-wrap">
+        <canvas
+          id="error-reasons-chart"
+          role="img"
+          aria-label="Динамика причин ошибок по стартам"
+        ></canvas>
+      </div>
+      <div class="error-reasons-legend" aria-hidden="true"></div>
+      {% if error_reason_stats.insight %}
+        <p class="error-reasons-insight">{{ error_reason_stats.insight }}</p>
+      {% endif %}
+    </section>
+  {% else %}
+    <p class="muted">Пока нет разобранных сплитов с указанной причиной ошибки.</p>
+  {% endif %}
+</article>

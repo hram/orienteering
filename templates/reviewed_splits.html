@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Разобранные сплиты</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Разобранные сплиты</h1>
+          <p>
+            {% if reviewed_reason_label %}
+              Сплиты с причиной «{{ reviewed_reason_label }}».
+            {% else %}
+              Все сплиты, по которым уже принято решение.
+            {% endif %}
+          </p>
+        </div>
+        <div class="actions">
+          <a class="button" href="/">К дашборду</a>
+          <a class="button" href="/problem-splits">Сплиты на анализ</a>
+          <a class="button primary" href="/trainings">Тренировки</a>
+          {% include "partials/_user_menu.html" %}
+        </div>
+      </header>
+
+      <section
+        id="dashboard-problem-workspace"
+        class="panel"
+        data-remove-reviewed="false"
+        data-dashboard='{{ {"trainings": dashboard_training_data, "splits": reviewed_splits} | tojson }}'
+      >
+        {% set show_reason_column = not reviewed_reason_label %}
+        <div class="pane-header">
+          <div>
+            <h2>Все разобранные сплиты</h2>
+            <p class="muted">{{ reviewed_split_total }} сплитов отсортированы по дате тренировки</p>
+          </div>
+        </div>
+        {% if reviewed_splits %}
+          <div class="problem-split-table-wrap">
+            <table class="problem-split-table">
+              <thead>
+                <tr>
+                  <th>Тренировка</th>
+                  <th>Время</th>
+                  <th>Лидер</th>
+                  <th>Отст.</th>
+                  {% if show_reason_column %}<th>Причина</th>{% endif %}
+                  <th aria-label="Действия"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for split in reviewed_splits %}
+                  <tr>
+                    <td>
+                      <div>{{ split.training_title }}</div>
+                      {% if split.training_date %}<small class="muted">{{ split.training_date }}</small>{% endif %}
+                    </td>
+                    <td>{{ split.split_time }}</td>
+                    <td>{{ split.leader_time }}</td>
+                    <td><span class="race-split-gap race-split-gap-hot">{{ split.gap_text }}</span></td>
+                    {% if show_reason_column %}<td>{{ split.reason_text }}</td>{% endif %}
+                    <td>
+                      <button
+                        class="split-analysis-button"
+                        type="button"
+                        data-problem-index="{{ split.problem_index }}"
+                        aria-label="Анализ сплита {{ split.split_label }}"
+                        title="Анализ сплита"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <polyline points="4 16 9 11 13 14 20 7"></polyline>
+                          <path d="M4 20h16"></path>
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="muted">Пока нет разобранных сплитов с такой причиной.</p>
+        {% endif %}
+      </section>
+    </main>
+
+    {% include "partials/split_analysis_dialog.html" %}
+    <script src="/static/splits.js"></script>
+    <script src="/static/split_analysis_dialog.js"></script>
+    <script src="/static/dashboard_problem_splits.js"></script>
+  </body>
+</html>

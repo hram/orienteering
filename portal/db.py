@@ -409,6 +409,43 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
         )
         """
     )
+    await _deduplicate_split_error_reviews(conn)
+    await conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS split_error_reviews_training_split_unique
+        ON split_error_reviews (
+            training_id,
+            split_label,
+            from_control_label,
+            to_control_label
+        )
+        """
+    )
+
+
+async def _deduplicate_split_error_reviews(conn: aiosqlite.Connection) -> None:
+    await conn.execute(
+        """
+        DELETE FROM split_error_reviews
+        WHERE review_id IN (
+            SELECT review_id
+            FROM (
+                SELECT
+                    review_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY training_id, split_label, from_control_label, to_control_label
+                        ORDER BY
+                            CASE WHEN race_result_id <> '' THEN 0 ELSE 1 END,
+                            COALESCE(reviewed_at, updated_at, created_at) DESC,
+                            updated_at DESC,
+                            created_at DESC
+                    ) AS duplicate_rank
+                FROM split_error_reviews
+            )
+            WHERE duplicate_rank > 1
+        )
+        """
+    )
 
 
 async def create_import_draft(
@@ -683,6 +720,103 @@ async def list_dashboard_race_results(
     return results
 
 
+async def list_dashboard_error_reason_stats(
+    conn: aiosqlite.Connection,
+    *,
+    viewer_user_id: str | None = None,
+) -> list[dict[str, Any]]:
+    base_sql = """
+        SELECT
+            er.reason_id AS reason_id,
+            COALESCE(er.label, NULLIF(r.custom_reason, ''), 'Другое') AS reason_label,
+            trainings.date AS training_date,
+            COUNT(*) AS count
+        FROM split_error_reviews r
+        JOIN trainings ON trainings.training_id = r.training_id
+        LEFT JOIN error_reasons er ON er.reason_id = r.reason_id
+        WHERE r.reviewed_at IS NOT NULL
+    """
+    if viewer_user_id is None:
+        cursor = await conn.execute(
+            base_sql
+            + """
+            GROUP BY er.reason_id, reason_label, trainings.date
+            ORDER BY trainings.date, reason_label
+            """
+        )
+    else:
+        cursor = await conn.execute(
+            base_sql
+            + """
+              AND EXISTS (
+                  SELECT 1
+                  FROM training_visibility tv
+                  WHERE tv.training_id = trainings.training_id
+                    AND tv.user_id = ?
+              )
+            GROUP BY er.reason_id, reason_label, trainings.date
+            ORDER BY trainings.date, reason_label
+            """,
+            (viewer_user_id,),
+        )
+    return [dict(row) for row in await cursor.fetchall()]
+
+
+async def list_dashboard_split_error_reviews(
+    conn: aiosqlite.Connection,
+    *,
+    viewer_user_id: str | None = None,
+    reason_id: str | None = None,
+    custom_reason: str | None = None,
+) -> list[dict[str, Any]]:
+    filters = ["r.reviewed_at IS NOT NULL"]
+    params: list[Any] = []
+    if reason_id:
+        filters.append("r.reason_id = ?")
+        params.append(reason_id)
+    elif custom_reason:
+        filters.append("r.reason_id IS NULL")
+        filters.append("r.custom_reason = ?")
+        params.append(custom_reason)
+
+    visibility_sql = ""
+    if viewer_user_id is not None:
+        visibility_sql = """
+          AND EXISTS (
+              SELECT 1
+              FROM training_visibility tv
+              WHERE tv.training_id = trainings.training_id
+                AND tv.user_id = ?
+          )
+        """
+        params.append(viewer_user_id)
+
+    cursor = await conn.execute(
+        f"""
+        SELECT
+            r.review_id,
+            r.training_id,
+            r.race_result_id,
+            r.split_label,
+            r.from_control_label,
+            r.to_control_label,
+            r.reason_id,
+            r.custom_reason,
+            r.reviewed_at,
+            er.label AS reason_label,
+            er.is_active AS reason_is_active
+        FROM split_error_reviews r
+        JOIN trainings ON trainings.training_id = r.training_id
+        LEFT JOIN error_reasons er ON er.reason_id = r.reason_id
+        WHERE {" AND ".join(filters)}
+        {visibility_sql}
+        ORDER BY trainings.date DESC, r.reviewed_at DESC
+        """,
+        params,
+    )
+    return [split_error_review_from_row(row) for row in await cursor.fetchall()]
+
+
 async def _list_reviewed_split_keys(
     conn: aiosqlite.Connection,
     *,
@@ -694,10 +828,9 @@ async def _list_reviewed_split_keys(
         SELECT split_label, from_control_label, to_control_label
         FROM split_error_reviews
         WHERE training_id = ?
-          AND race_result_id = ?
           AND reviewed_at IS NOT NULL
         """,
-        (training_id, race_result_id or ""),
+        (training_id,),
     )
     return {
         (row["split_label"], row["from_control_label"], row["to_control_label"])
@@ -1072,14 +1205,16 @@ async def get_split_error_review(
         FROM split_error_reviews r
         LEFT JOIN error_reasons er ON er.reason_id = r.reason_id
         WHERE r.training_id = ?
-          AND r.race_result_id = ?
           AND r.split_label = ?
           AND r.from_control_label = ?
           AND r.to_control_label = ?
+        ORDER BY
+          CASE WHEN r.race_result_id <> '' THEN 0 ELSE 1 END,
+          COALESCE(r.reviewed_at, r.updated_at, r.created_at) DESC
+        LIMIT 1
         """,
         (
             training_id,
-            race_result_id or "",
             split_label,
             from_control_label,
             to_control_label,
@@ -1138,16 +1273,20 @@ async def save_split_error_review(
             ),
         )
     else:
+        stored_race_result_id = existing.get("race_result_id") or ""
+        next_race_result_id = stored_race_result_id or (race_result_id or "")
         await conn.execute(
             """
             UPDATE split_error_reviews
-            SET reason_id = ?,
+            SET race_result_id = ?,
+                reason_id = ?,
                 custom_reason = ?,
                 reviewed_at = ?,
                 updated_at = ?
             WHERE review_id = ?
             """,
             (
+                next_race_result_id,
                 normalized_reason_id,
                 normalized_custom,
                 reviewed_at,

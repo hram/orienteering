@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 
 from fastapi.testclient import TestClient
 
@@ -90,6 +91,53 @@ def test_split_error_review_api_saves_catalog_and_custom_reason() -> None:
     assert save_custom.status_code == 200
     assert loaded_custom.json()["review"]["reason_id"] is None
     assert loaded_custom.json()["review"]["custom_reason"] == "Свой выбор"
+
+
+def test_split_error_review_uses_training_split_as_identity() -> None:
+    with TestClient(app) as client:
+        reasons_response = client.get("/api/error-reasons")
+        first_reason_id = reasons_response.json()["reasons"][0]["reason_id"]
+        second_reason_id = reasons_response.json()["reasons"][1]["reason_id"]
+        key = {
+            "training_id": "identity-training",
+            "split_label": "5",
+            "from_control_label": "4",
+            "to_control_label": "5",
+        }
+        first_save = client.put(
+            "/api/split-error-review",
+            json={**key, "race_result_id": None, "reason_id": first_reason_id, "custom_reason": None},
+        )
+        second_save = client.put(
+            "/api/split-error-review",
+            json={**key, "race_result_id": "race-result-actual", "reason_id": second_reason_id, "custom_reason": None},
+        )
+        loaded = client.post(
+            "/api/split-error-review/get",
+            json={**key, "race_result_id": None},
+        )
+
+    con = sqlite3.connect(os.environ["ORIENTEERING_PORTAL_DB_PATH"])
+    try:
+        count = con.execute(
+            """
+            SELECT COUNT(*)
+            FROM split_error_reviews
+            WHERE training_id = ?
+              AND split_label = ?
+              AND from_control_label = ?
+              AND to_control_label = ?
+            """,
+            ("identity-training", "5", "4", "5"),
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    assert first_save.status_code == 200
+    assert second_save.status_code == 200
+    assert loaded.json()["review"]["reason_id"] == second_reason_id
+    assert loaded.json()["review"]["race_result_id"] == "race-result-actual"
+    assert count == 1
 
 
 def test_training_import_form_creates_draft_and_redirects_to_map_step() -> None:

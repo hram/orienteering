@@ -21,6 +21,9 @@
   });
 
   window.addEventListener("orienteering:split-reviewed", (event) => {
+    if (workspace.dataset.removeReviewed === "false") {
+      return;
+    }
     const problemIndex = Number(event.detail?.problemIndex);
     if (!Number.isFinite(problemIndex)) {
       return;
@@ -117,7 +120,8 @@
   }
 
   function updateProblemTotal() {
-    const summary = workspace.querySelector(".pane-header .muted");
+    const summary = workspace.querySelector(".dashboard-problem-card .pane-header .muted")
+      || workspace.querySelector(".pane-header .muted");
     if (!summary) {
       return;
     }

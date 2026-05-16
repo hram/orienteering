@@ -831,6 +831,8 @@ def test_dashboard_problem_splits_panel_renders(monkeypatch) -> None:
     assert save.status_code == 303
     assert dashboard.status_code == 200
     assert "dashboard-grid" in dashboard.text
+    assert "Причины ошибок" in dashboard.text
+    assert "dashboard_error_reasons.js" in dashboard.text
     assert "Сплиты на анализ" in dashboard.text
     assert "Все сплиты" in dashboard.text
     assert "Dashboard problems" in dashboard.text
@@ -844,7 +846,7 @@ def test_dashboard_problem_splits_panel_renders(monkeypatch) -> None:
 
 
 def test_dashboard_problem_splits_excludes_reviewed_split() -> None:
-    from portal.main import _build_problem_splits
+    from portal.main import _build_problem_splits, _build_reviewed_splits
 
     controls = [
         {"lat": 60.0, "lon": 30.0 + index * 0.001}
@@ -903,9 +905,55 @@ def test_dashboard_problem_splits_excludes_reviewed_split() -> None:
     problem_splits, _ = _build_problem_splits([result])
     reviewed_result = {**result, "reviewed_split_keys": {("4", "3", "4")}}
     reviewed_problem_splits, _ = _build_problem_splits([reviewed_result])
+    reviewed_splits, _ = _build_reviewed_splits(
+        [result],
+        [
+            {
+                "training_id": "training-1",
+                "race_result_id": "race-result-1",
+                "split_label": "4",
+                "from_control_label": "3",
+                "to_control_label": "4",
+                "reason_label": "Низкий темп без ошибки",
+                "custom_reason": None,
+                "reviewed_at": "2026-04-30T10:00:00+00:00",
+            }
+        ],
+    )
 
     assert [split["split_label"] for split in problem_splits] == ["4"]
     assert reviewed_problem_splits == []
+    assert [split["split_label"] for split in reviewed_splits] == ["4"]
+    assert reviewed_splits[0]["reason_text"] == "Низкий темп без ошибки"
+
+
+def test_dashboard_error_reason_stats_builds_top_and_trend() -> None:
+    from portal.main import _build_error_reason_stats
+
+    stats = _build_error_reason_stats(
+        [
+            {"reason_label": "Плохой выбор пути", "training_date": "2026-04-01", "count": 3},
+            {"reason_label": "Плохой выбор пути", "training_date": "2026-04-10", "count": 1},
+            {"reason_label": "Ошибка направления", "training_date": "2026-04-10", "count": 2},
+        ]
+    )
+
+    assert stats["total"] == 6
+    assert stats["start_count"] == 2
+    assert stats["dates"] == ["01.04", "10.04"]
+    assert stats["top_reason"]["label"] == "Плохой выбор пути"
+    assert stats["top_reason"]["trend"] == [3, 1]
+    assert stats["top_reason"]["url"].startswith("/reviewed-splits?")
+    assert "встречается реже" in stats["insight"]
+
+
+def test_reviewed_splits_page_renders_empty_state() -> None:
+    with TestClient(app) as client:
+        response = client.get("/reviewed-splits")
+
+    assert response.status_code == 200
+    assert "Разобранные сплиты" in response.text
+    assert "Пока нет разобранных сплитов" in response.text
 
 
 def test_race_result_can_be_deleted_from_listing(monkeypatch) -> None:

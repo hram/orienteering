@@ -26,30 +26,36 @@
         class="dashboard-grid"
         data-dashboard='{{ {"trainings": dashboard_training_data, "splits": problem_splits} | tojson }}'
       >
-        <article class="panel dashboard-card">
-          <div class="pane-header">
-            <div>
-              <h2>Сплиты на анализ</h2>
-              <p class="muted">{{ problem_split_total }} проблемных сплитов</p>
+        <div class="dashboard-column">
+          <article class="panel dashboard-card dashboard-problem-card">
+            <div class="pane-header">
+              <div>
+                <h2>Сплиты на анализ</h2>
+                <p class="muted">{{ problem_split_total }} проблемных сплитов</p>
+              </div>
+              <a class="button compact" href="/problem-splits">Все сплиты</a>
             </div>
-            <a class="button compact" href="/problem-splits">Все сплиты</a>
-          </div>
-          {% if problem_splits %}
-            <div class="dashboard-split-list">
-              {% for split in problem_splits %}
-                {% include "partials/problem_split_card.html" %}
-              {% endfor %}
-            </div>
-          {% else %}
-            <p class="muted">Пока нет проблемных сплитов с привязанной картой и треком.</p>
-          {% endif %}
-        </article>
+            {% if problem_splits %}
+              <div class="dashboard-split-list">
+                {% for split in problem_splits %}
+                  {% include "partials/problem_split_card.html" %}
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="muted">Пока нет проблемных сплитов с привязанной картой и треком.</p>
+            {% endif %}
+          </article>
+        </div>
+        <div class="dashboard-column">
+          {% include "partials/error_reasons_dashboard.html" %}
+        </div>
       </section>
     </main>
 
     {% include "partials/split_analysis_dialog.html" %}
     <script src="/static/splits.js"></script>
     <script src="/static/split_analysis_dialog.js"></script>
+    <script src="/static/dashboard_error_reasons.js"></script>
     <script src="/static/dashboard_problem_splits.js"></script>
   </body>
 </html>

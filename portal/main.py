@@ -16,7 +16,14 @@ from portal.auth import (
     fetch_user_by_id,
     fetch_user_by_username,
 )
-from portal.db import connect_db, init_db, list_dashboard_race_results, normalize_db_path
+from portal.db import (
+    connect_db,
+    init_db,
+    list_dashboard_error_reason_stats,
+    list_dashboard_race_results,
+    list_dashboard_split_error_reviews,
+    normalize_db_path,
+)
 from portal.infrastructure import config
 from portal.routers import ai, auth as auth_router, georef, imports, race_results, settings
 
@@ -103,6 +110,20 @@ async def problem_splits_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "problem_splits.html", dashboard)
 
 
+@app.get("/reviewed-splits", response_class=HTMLResponse)
+async def reviewed_splits_page(
+    request: Request,
+    reason_id: str | None = None,
+    custom_reason: str | None = None,
+) -> HTMLResponse:
+    dashboard = await _reviewed_splits_context(
+        request,
+        reason_id=reason_id,
+        custom_reason=custom_reason,
+    )
+    return templates.TemplateResponse(request, "reviewed_splits.html", dashboard)
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon() -> FileResponse:
     return FileResponse(STATIC_DIR / "favicon.ico")
@@ -114,6 +135,7 @@ async def _dashboard_context(request: Request, *, limit: int | None) -> dict:
     conn = await connect_db(normalize_db_path(config.DB_PATH))
     try:
         sources = await list_dashboard_race_results(conn, viewer_user_id=viewer_user_id)
+        error_reason_rows = await list_dashboard_error_reason_stats(conn, viewer_user_id=viewer_user_id)
     finally:
         await conn.close()
     problem_splits, trainings = _build_problem_splits(sources)
@@ -127,7 +149,132 @@ async def _dashboard_context(request: Request, *, limit: int | None) -> dict:
             for training_id, training in trainings.items()
             if training_id in visible_training_ids
         },
+        "error_reason_stats": _build_error_reason_stats(error_reason_rows),
     }
+
+
+async def _reviewed_splits_context(
+    request: Request,
+    *,
+    reason_id: str | None,
+    custom_reason: str | None,
+) -> dict:
+    user = request.state.user
+    viewer_user_id = None if user.is_admin else user.user_id
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        sources = await list_dashboard_race_results(conn, viewer_user_id=viewer_user_id)
+        reviews = await list_dashboard_split_error_reviews(
+            conn,
+            viewer_user_id=viewer_user_id,
+            reason_id=reason_id,
+            custom_reason=custom_reason,
+        )
+    finally:
+        await conn.close()
+    reviewed_splits, trainings = _build_reviewed_splits(sources, reviews)
+    visible_training_ids = {split["training_id"] for split in reviewed_splits}
+    reason_label = reviewed_splits[0]["reason_text"] if reviewed_splits and (reason_id or custom_reason) else None
+    return {
+        "reviewed_splits": reviewed_splits,
+        "reviewed_split_total": len(reviewed_splits),
+        "reviewed_reason_label": reason_label,
+        "dashboard_training_data": {
+            training_id: training
+            for training_id, training in trainings.items()
+            if training_id in visible_training_ids
+        },
+    }
+
+
+ERROR_REASON_COLORS = (
+    "#c63d3d",
+    "#b46a12",
+    "#267bc6",
+    "#756bd8",
+    "#148762",
+    "#8c5a2b",
+    "#5f6f78",
+    "#9f2f68",
+)
+
+
+def _build_error_reason_stats(rows: list[dict]) -> dict:
+    if not rows:
+        return {
+            "total": 0,
+            "start_count": 0,
+            "top_reason": None,
+            "dates": [],
+            "reasons": [],
+            "insight": "",
+        }
+
+    date_labels = sorted({str(row["training_date"]) for row in rows if row.get("training_date")})
+    reason_labels: dict[str, str] = {}
+    reason_ids: dict[str, str | None] = {}
+    counts_by_key: dict[str, int] = {}
+    counts_by_key_date: dict[tuple[str, str], int] = {}
+
+    for row in rows:
+        label = str(row.get("reason_label") or "Другое")
+        reason_id = row.get("reason_id")
+        key = str(reason_id or label)
+        date = str(row.get("training_date") or "")
+        count = int(row.get("count") or 0)
+        reason_labels[key] = label
+        reason_ids[key] = str(reason_id) if reason_id else None
+        counts_by_key[key] = counts_by_key.get(key, 0) + count
+        if date:
+            counts_by_key_date[(key, date)] = counts_by_key_date.get((key, date), 0) + count
+
+    sorted_keys = sorted(counts_by_key, key=lambda key: (-counts_by_key[key], reason_labels[key]))
+    reasons = [
+        {
+            "label": reason_labels[key],
+            "count": counts_by_key[key],
+            "color": ERROR_REASON_COLORS[index % len(ERROR_REASON_COLORS)],
+            "trend": [counts_by_key_date.get((key, date), 0) for date in date_labels],
+            "url": _reviewed_splits_reason_url(reason_ids[key], reason_labels[key]),
+        }
+        for index, key in enumerate(sorted_keys[:5])
+    ]
+    top_reason = reasons[0] if reasons else None
+    return {
+        "total": sum(counts_by_key.values()),
+        "start_count": len(date_labels),
+        "top_reason": top_reason,
+        "dates": [_format_dashboard_date_label(date) for date in date_labels],
+        "reasons": reasons,
+        "insight": _error_reason_insight(top_reason, date_labels),
+    }
+
+
+def _reviewed_splits_reason_url(reason_id: str | None, label: str) -> str:
+    from urllib.parse import urlencode
+
+    query = {"reason_id": reason_id} if reason_id else {"custom_reason": label}
+    return f"/reviewed-splits?{urlencode(query)}"
+
+
+def _format_dashboard_date_label(value: str) -> str:
+    parts = value.split("-")
+    if len(parts) == 3:
+        return f"{parts[2]}.{parts[1]}"
+    return value
+
+
+def _error_reason_insight(top_reason: dict | None, date_labels: list[str]) -> str:
+    if not top_reason or len(date_labels) < 2:
+        return ""
+    first = top_reason["trend"][0]
+    last = top_reason["trend"][-1]
+    label = top_reason["label"]
+    if last < first:
+        return f"«{label}» встречается реже: с {first} до {last} за период."
+    if last > first:
+        return f"«{label}» пока растет: с {first} до {last} за период."
+    return f"«{label}» держится на одном уровне: {last} за последний старт."
 
 
 def _build_problem_splits(sources: list[dict]) -> tuple[list[dict], dict[str, dict]]:
@@ -146,6 +293,33 @@ def _build_problem_splits(sources: list[dict]) -> tuple[list[dict], dict[str, di
     for index, item in enumerate(problem_splits):
         item["problem_index"] = index
     return problem_splits, trainings
+
+
+def _build_reviewed_splits(sources: list[dict], reviews: list[dict]) -> tuple[list[dict], dict[str, dict]]:
+    reviews_by_key = {
+        (
+            review["training_id"],
+            review["split_label"],
+            review["from_control_label"],
+            review["to_control_label"],
+        ): review
+        for review in reviews
+    }
+    reviewed_splits: list[dict] = []
+    trainings: dict[str, dict] = {}
+    for result in sources:
+        training_id = result.get("training_id")
+        if not training_id or not _dashboard_training_ready(result):
+            continue
+        trainings.setdefault(training_id, _dashboard_training_payload(result))
+        if result.get("kind") == "score":
+            _append_score_reviewed_splits(reviewed_splits, result, reviews_by_key)
+        else:
+            _append_course_reviewed_splits(reviewed_splits, result, reviews_by_key)
+    reviewed_splits.sort(key=lambda item: (item.get("training_date") or "", item.get("reviewed_at") or ""), reverse=True)
+    for index, item in enumerate(reviewed_splits):
+        item["problem_index"] = index
+    return reviewed_splits, trainings
 
 
 def _dashboard_training_ready(result: dict) -> bool:
@@ -192,6 +366,40 @@ def _append_course_problem_splits(items: list[dict], result: dict) -> None:
         items.append(_problem_split_payload(result, split_index, split.get("label", ""), split_time, leader_seconds, gap_seconds))
 
 
+def _append_course_reviewed_splits(
+    items: list[dict],
+    result: dict,
+    reviews_by_key: dict[tuple[str, str, str, str], dict],
+) -> None:
+    race_results._prepare_race_result_view(result)
+    self_participant = result.get("self_participant")
+    if not self_participant:
+        return
+    leader_splits = race_results._leader_split_seconds_by_split(result.get("participants", []))
+    for split_index, split in enumerate(self_participant.get("splits", [])):
+        key = _dashboard_review_key(result, split_index)
+        if not key:
+            continue
+        review = reviews_by_key.get((result["training_id"], *key))
+        if not review:
+            continue
+        split_time = race_results._split_stage_time(split, split_index) or {}
+        seconds = split_time.get("seconds")
+        leader_seconds = leader_splits[split_index] if split_index < len(leader_splits) else None
+        if seconds is None or leader_seconds is None:
+            continue
+        item = _problem_split_payload(
+            result,
+            split_index,
+            split.get("label", ""),
+            split_time,
+            leader_seconds,
+            seconds - leader_seconds,
+        )
+        _attach_review_payload(item, review)
+        items.append(item)
+
+
 def _append_score_problem_splits(items: list[dict], result: dict) -> None:
     race_results._prepare_score_result_view(result)
     self_participant = result.get("self_participant")
@@ -214,6 +422,45 @@ def _append_score_problem_splits(items: list[dict], result: dict) -> None:
             continue
         label = visit.get("code") or str(visit_index + 1)
         items.append(_problem_split_payload(result, visit_index, label, split, leader_seconds, gap_seconds))
+
+
+def _append_score_reviewed_splits(
+    items: list[dict],
+    result: dict,
+    reviews_by_key: dict[tuple[str, str, str, str], dict],
+) -> None:
+    race_results._prepare_score_result_view(result)
+    self_participant = result.get("self_participant")
+    if not self_participant:
+        return
+    for visit_index, visit in enumerate(self_participant.get("visits", [])):
+        key = _dashboard_review_key(result, visit_index)
+        if not key:
+            continue
+        review = reviews_by_key.get((result["training_id"], *key))
+        if not review:
+            continue
+        split = visit.get("split") or {}
+        seconds = split.get("seconds")
+        leader_seconds = visit.get("best_leg_seconds")
+        if seconds is None or leader_seconds is None:
+            continue
+        label = visit.get("code") or str(visit_index + 1)
+        item = _problem_split_payload(
+            result,
+            visit_index,
+            label,
+            split,
+            leader_seconds,
+            seconds - leader_seconds,
+        )
+        _attach_review_payload(item, review)
+        items.append(item)
+
+
+def _attach_review_payload(item: dict, review: dict) -> None:
+    item["reviewed_at"] = review.get("reviewed_at") or ""
+    item["reason_text"] = review.get("reason_label") or review.get("custom_reason") or "Другое"
 
 
 def _is_reviewed_problem_split(result: dict, split_index: int) -> bool:
