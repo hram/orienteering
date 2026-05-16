@@ -1,0 +1,30 @@
+<article
+  class="panel dashboard-card race-positions-card"
+  data-race-positions='{{ race_position_stats | tojson }}'
+>
+  <div class="pane-header">
+    <div>
+      <h2>Места на соревнованиях</h2>
+      <p class="muted">
+        {% if race_position_stats.race_count %}
+          {{ race_position_stats.race_count }} стартов · последнее {{ race_position_stats.latest_place }} из {{ race_position_stats.latest_participant_count }}
+        {% else %}
+          Нет импортированных протоколов
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {% if race_position_stats.points %}
+    <div class="race-positions-chart-wrap">
+      <canvas
+        id="race-positions-chart"
+        role="img"
+        aria-label="Динамика занимаемого места по соревнованиям"
+      ></canvas>
+    </div>
+    <p class="race-positions-hint">Чем выше график, тем лучше</p>
+  {% else %}
+    <p class="muted">Пока нет протоколов с выбранным участником и местом.</p>
+  {% endif %}
+</article>

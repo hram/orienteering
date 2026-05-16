@@ -42,7 +42,33 @@ def test_training_import_wizard_starts_with_details_step() -> None:
     assert response.status_code == 200
     assert "Шаг 1 из 3" in response.text
     assert 'action="/trainings/imports"' in response.text
+    assert 'name="discipline" required' in response.text
+    assert "Бег" in response.text
+    assert "Велосипед" in response.text
+    assert "Лыжи" in response.text
     assert 'form="training-details-form">К карте' in response.text
+
+
+def test_training_import_requires_discipline() -> None:
+    with TestClient(app) as client:
+        missing = client.post(
+            "/trainings/imports",
+            data={"title": "No discipline", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            follow_redirects=False,
+        )
+        invalid = client.post(
+            "/trainings/imports",
+            data={
+                "title": "Bad discipline",
+                "date": "2026-04-29",
+                "discipline": "swim",
+                "subject_user_id": fetch_user_id("polina"),
+            },
+            follow_redirects=False,
+        )
+
+    assert missing.status_code == 422
+    assert invalid.status_code == 422
 
 
 def test_error_reason_settings_page_renders_and_creates_reason() -> None:
@@ -148,6 +174,7 @@ def test_training_import_form_creates_draft_and_redirects_to_map_step() -> None:
                 "title": "Лесная тренировка",
                 "date": "2026-04-29",
                 "training_type": "training",
+                "discipline": "run",
                 "location": "Парк",
                 "notes": "Азимут и вход в КП",
                 "subject_user_id": fetch_user_id("polina"),
@@ -164,7 +191,7 @@ def test_import_map_page_shows_second_step_of_three() -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Map test", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Map test", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         response = client.get(create_response.headers["location"])
@@ -182,7 +209,7 @@ def test_import_track_page_renders() -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Track test", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Track test", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]
@@ -201,7 +228,7 @@ def test_import_track_can_be_deleted_from_draft() -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Bad track", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Bad track", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]
@@ -261,7 +288,7 @@ def test_finish_training_import_redirects_to_trainings() -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Finish test", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Finish test", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]
@@ -298,7 +325,7 @@ def test_training_player_page_renders_after_import_finish() -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Player test", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Player test", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]
@@ -343,7 +370,7 @@ def test_training_can_be_deleted_from_listing() -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Disposable training", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Disposable training", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]
@@ -400,7 +427,7 @@ def test_deleting_training_with_attached_race_result_keeps_result() -> None:
         try:
             create_response = client.post(
                 "/trainings/imports",
-                data={"title": "Training with protocol", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+                data={"title": "Training with protocol", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
                 follow_redirects=False,
             )
             draft_id = create_response.headers["location"].split("/")[3]
@@ -465,6 +492,7 @@ def test_training_edit_wizard_prefills_existing_training() -> None:
                 "title": "Edit me",
                 "date": "2026-04-29",
                 "training_type": "race",
+                "discipline": "bike",
                 "location": "Forest",
                 "notes": "Original notes",
                 "subject_user_id": fetch_user_id("polina"),
@@ -509,7 +537,7 @@ def test_training_edit_finish_updates_existing_training() -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Before edit", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Before edit", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]
@@ -539,6 +567,7 @@ def test_training_edit_finish_updates_existing_training() -> None:
                 "title": "After edit",
                 "date": "2026-04-30",
                 "training_type": "control",
+                "discipline": "ski",
                 "location": "Updated forest",
                 "notes": "Updated notes",
             },
@@ -571,7 +600,7 @@ def test_save_training_track_points_updates_player_data() -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Trim save", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Trim save", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]

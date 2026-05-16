@@ -39,6 +39,11 @@ router = APIRouter()
 
 ALLOWED_MAP_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 ALLOWED_TRACK_SUFFIXES = {".gpx"}
+DISCIPLINE_LABELS = {
+    "run": "Бег",
+    "bike": "Велосипед",
+    "ski": "Лыжи",
+}
 
 
 class SaveGeorefPayload(BaseModel):
@@ -77,6 +82,8 @@ async def trainings_page(request: Request) -> HTMLResponse:
         trainings = await list_trainings(conn, viewer_user_id=viewer_user_id)
     finally:
         await conn.close()
+    for training in trainings:
+        training["discipline_label"] = DISCIPLINE_LABELS.get(training.get("discipline") or "", "")
     return templates.TemplateResponse(request, "trainings.html", {"trainings": trainings})
 
 
@@ -101,6 +108,7 @@ async def new_training_page(request: Request) -> HTMLResponse:
             "viewer_is_admin": user.is_admin,
             "selectable_users": selectable_users,
             "selected_subject_user_id": None,
+            "discipline_options": DISCIPLINE_LABELS,
         },
     )
 
@@ -146,6 +154,7 @@ async def create_training_import_from_form(
     title: str = Form(...),
     date: str = Form(...),
     training_type: str = Form("training"),
+    discipline: str = Form(...),
     location: str = Form(""),
     notes: str = Form(""),
     subject_user_id: str | None = Form(None),
@@ -162,6 +171,7 @@ async def create_training_import_from_form(
             title=title.strip(),
             date=date,
             training_type=training_type,
+            discipline=_normalize_discipline(discipline),
             location=location.strip() or None,
             notes=notes.strip() or None,
             subject_user_id=resolved_subject,
@@ -196,6 +206,7 @@ async def edit_import_details_page(draft_id: str, request: Request) -> HTMLRespo
             "viewer_is_admin": user.is_admin,
             "selectable_users": selectable_users,
             "selected_subject_user_id": draft.get("subject_user_id"),
+            "discipline_options": DISCIPLINE_LABELS,
         },
     )
 
@@ -207,6 +218,7 @@ async def update_training_import_details_from_form(
     title: str = Form(...),
     date: str = Form(...),
     training_type: str = Form("training"),
+    discipline: str = Form(...),
     location: str = Form(""),
     notes: str = Form(""),
     subject_user_id: str | None = Form(None),
@@ -218,6 +230,7 @@ async def update_training_import_details_from_form(
             "title": title.strip(),
             "date": date,
             "training_type": training_type,
+            "discipline": _normalize_discipline(discipline),
             "location": location.strip() or None,
             "notes": notes.strip() or None,
         }
@@ -505,6 +518,13 @@ def _draft_view_model(draft: dict) -> dict:
         if relative is not None:
             payload["map_image_url"] = f"/uploads/{relative.as_posix()}"
     return payload
+
+
+def _normalize_discipline(value: str) -> str:
+    normalized = value.strip()
+    if normalized not in DISCIPLINE_LABELS:
+        raise HTTPException(status_code=422, detail="Укажите тип соревнования: бег, велосипед или лыжи.")
+    return normalized
 
 
 def _training_view_model(training: dict) -> dict:

@@ -373,6 +373,17 @@ h1 {
   line-height: 1.5;
 }
 
+.race-positions-chart-wrap {
+  position: relative;
+  height: 220px;
+}
+
+.race-positions-hint {
+  margin: 12px 0 0;
+  color: #66747c;
+  font-size: 13px;
+}
+
 .dashboard-split-list {
   display: grid;
   gap: 10px;

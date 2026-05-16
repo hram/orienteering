@@ -150,6 +150,7 @@ async def _dashboard_context(request: Request, *, limit: int | None) -> dict:
             if training_id in visible_training_ids
         },
         "error_reason_stats": _build_error_reason_stats(error_reason_rows),
+        "race_position_stats": _build_race_position_stats(sources),
     }
 
 
@@ -275,6 +276,47 @@ def _error_reason_insight(top_reason: dict | None, date_labels: list[str]) -> st
     if last > first:
         return f"«{label}» пока растет: с {first} до {last} за период."
     return f"«{label}» держится на одном уровне: {last} за последний старт."
+
+
+def _build_race_position_stats(sources: list[dict]) -> dict:
+    points = []
+    for result in sources:
+        self_participant = result.get("self_participant") or {}
+        place = _place_to_int(self_participant.get("place"))
+        if place is None:
+            continue
+        participant_count = len(result.get("participants") or [])
+        date = str(result.get("training_date") or "")
+        points.append(
+            {
+                "date": date,
+                "date_label": _format_dashboard_date_label(date),
+                "place": place,
+                "participant_count": participant_count,
+                "position_ratio": round(place / participant_count, 4) if participant_count else None,
+                "group_name": result.get("group_name") or "",
+                "event_name": result.get("event_name") or result.get("training_title") or "Соревнование",
+                "training_title": result.get("training_title") or "Соревнование",
+            }
+        )
+    points.sort(key=lambda point: (point["date"], point["event_name"], point["group_name"]))
+    latest = points[-1] if points else None
+    comparable_points = [point for point in points if point["position_ratio"] is not None]
+    best = min(comparable_points, key=lambda point: point["position_ratio"]) if comparable_points else None
+    return {
+        "points": points,
+        "race_count": len(points),
+        "latest_place": latest["place"] if latest else None,
+        "latest_participant_count": latest["participant_count"] if latest else None,
+        "best_place": best["place"] if best else None,
+        "best_participant_count": best["participant_count"] if best else None,
+        "max_place": max((point["place"] for point in points), default=1),
+    }
+
+
+def _place_to_int(value: object) -> int | None:
+    text = str(value or "").strip()
+    return int(text) if text.isdigit() else None
 
 
 def _build_problem_splits(sources: list[dict]) -> tuple[list[dict], dict[str, dict]]:

@@ -41,6 +41,16 @@
         </label>
 
         <label>
+          Дисциплина
+          <select name="discipline" required>
+            <option value="" {% if not draft.discipline %}selected{% endif %} disabled>Выберите дисциплину</option>
+            {% for value, label in discipline_options.items() %}
+              <option value="{{ value }}" {% if draft.discipline == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <label>
           Место
           <input name="location" placeholder="Парк, лес, город" value="{{ draft.location or '' }}">
         </label>

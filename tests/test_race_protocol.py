@@ -369,6 +369,7 @@ def test_score_protocol_attached_to_rogaine_training_has_split_analysis_buttons(
                 "title": "Rogaine protocol",
                 "date": "2026-04-29",
                 "training_type": "rogaine",
+                "discipline": "run",
                 "subject_user_id": fetch_user_id("polina"),
             },
             follow_redirects=False,
@@ -692,7 +693,7 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Race with protocol", "date": "2026-04-26", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Race with protocol", "date": "2026-04-26", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]
@@ -787,7 +788,7 @@ def test_dashboard_problem_splits_panel_renders(monkeypatch) -> None:
     with TestClient(app) as client:
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Dashboard problems", "date": "2026-04-29", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Dashboard problems", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]
@@ -833,6 +834,8 @@ def test_dashboard_problem_splits_panel_renders(monkeypatch) -> None:
     assert "dashboard-grid" in dashboard.text
     assert "Причины ошибок" in dashboard.text
     assert "dashboard_error_reasons.js" in dashboard.text
+    assert "Места на соревнованиях" in dashboard.text
+    assert "dashboard_race_positions.js" in dashboard.text
     assert "Сплиты на анализ" in dashboard.text
     assert "Все сплиты" in dashboard.text
     assert "Dashboard problems" in dashboard.text
@@ -947,6 +950,49 @@ def test_dashboard_error_reason_stats_builds_top_and_trend() -> None:
     assert "встречается реже" in stats["insight"]
 
 
+def test_dashboard_race_position_stats_builds_place_trend() -> None:
+    from portal.main import _build_race_position_stats
+
+    stats = _build_race_position_stats(
+        [
+            {
+                "training_date": "2026-05-03",
+                "training_title": "Первый старт",
+                "event_name": "Первый старт",
+                "group_name": "Ж14",
+                "participants": [{} for _ in range(20)],
+                "self_participant": {"place": "16"},
+            },
+            {
+                "training_date": "2026-05-10",
+                "training_title": "Второй старт",
+                "event_name": "Второй старт",
+                "group_name": "Ж14",
+                "participants": [{} for _ in range(40)],
+                "self_participant": {"place": "7"},
+            },
+            {
+                "training_date": "2026-05-11",
+                "training_title": "Без места",
+                "event_name": "Без места",
+                "group_name": "Ж14",
+                "participants": [{}],
+                "self_participant": {"place": "в/к"},
+            },
+        ]
+    )
+
+    assert stats["race_count"] == 2
+    assert stats["latest_place"] == 7
+    assert stats["latest_participant_count"] == 40
+    assert stats["best_place"] == 7
+    assert stats["best_participant_count"] == 40
+    assert stats["max_place"] == 16
+    assert stats["points"][0]["position_ratio"] == 0.8
+    assert stats["points"][1]["position_ratio"] == 0.175
+    assert [point["date_label"] for point in stats["points"]] == ["03.05", "10.05"]
+
+
 def test_reviewed_splits_page_renders_empty_state() -> None:
     with TestClient(app) as client:
         response = client.get("/reviewed-splits")
@@ -1037,7 +1083,7 @@ def test_training_can_attach_previously_imported_race_result(monkeypatch) -> Non
 
         create_response = client.post(
             "/trainings/imports",
-            data={"title": "Attach protocol", "date": "2026-04-26", "subject_user_id": fetch_user_id("polina")},
+            data={"title": "Attach protocol", "date": "2026-04-26", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
             follow_redirects=False,
         )
         draft_id = create_response.headers["location"].split("/")[3]

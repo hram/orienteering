@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS trainings (
     title           TEXT NOT NULL,
     date            TEXT NOT NULL,
     training_type   TEXT,
+    discipline      TEXT,
     location        TEXT,
     map_id          TEXT,
     gpx_path        TEXT,
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS training_import_drafts (
     title                 TEXT NOT NULL,
     date                  TEXT NOT NULL,
     training_type         TEXT,
+    discipline            TEXT,
     location              TEXT,
     notes                 TEXT,
     map_image_path        TEXT,
@@ -327,6 +329,9 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
 
     cursor = await conn.execute("PRAGMA table_info(training_import_drafts)")
     draft_columns = {row["name"] for row in await cursor.fetchall()}
+    if "discipline" not in draft_columns:
+        await conn.execute("ALTER TABLE training_import_drafts ADD COLUMN discipline TEXT")
+        await conn.execute("UPDATE training_import_drafts SET discipline = 'run' WHERE discipline IS NULL OR discipline = ''")
     if "course_controls" not in draft_columns:
         await conn.execute("ALTER TABLE training_import_drafts ADD COLUMN course_controls TEXT")
     if "track_gpx_path" not in draft_columns:
@@ -346,6 +351,9 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
     training_columns = {row["name"] for row in await cursor.fetchall()}
     if "training_type" not in training_columns:
         await conn.execute("ALTER TABLE trainings ADD COLUMN training_type TEXT")
+    if "discipline" not in training_columns:
+        await conn.execute("ALTER TABLE trainings ADD COLUMN discipline TEXT")
+        await conn.execute("UPDATE trainings SET discipline = 'run' WHERE discipline IS NULL OR discipline = ''")
     if "location" not in training_columns:
         await conn.execute("ALTER TABLE trainings ADD COLUMN location TEXT")
     if "course_controls" not in training_columns:
@@ -454,6 +462,7 @@ async def create_import_draft(
     title: str,
     date: str,
     training_type: str | None = None,
+    discipline: str | None = None,
     location: str | None = None,
     notes: str | None = None,
     subject_user_id: str | None = None,
@@ -463,12 +472,12 @@ async def create_import_draft(
     await conn.execute(
         """
         INSERT INTO training_import_drafts (
-            draft_id, title, date, training_type, location, notes,
+            draft_id, title, date, training_type, discipline, location, notes,
             subject_user_id, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (draft_id, title, date, training_type, location, notes, subject_user_id, now, now),
+        (draft_id, title, date, training_type, discipline, location, notes, subject_user_id, now, now),
     )
     await conn.commit()
     draft = await get_import_draft(conn, draft_id)
@@ -501,19 +510,20 @@ async def create_edit_import_draft(
     await conn.execute(
         """
         INSERT INTO training_import_drafts (
-            draft_id, title, date, training_type, location, notes,
+            draft_id, title, date, training_type, discipline, location, notes,
             map_image_path, map_image_filename,
             georef_method, georef_control_points, georef_transform, georef_residuals,
             course_controls, track_gpx_path, track_gpx_filename, track_points,
             edit_training_id, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             draft_id,
             training["title"],
             training["date"],
             training.get("training_type"),
+            training.get("discipline"),
             training.get("location"),
             training.get("notes"),
             training.get("map_image_path"),
@@ -542,6 +552,7 @@ async def update_import_draft_details(
     title: str,
     date: str,
     training_type: str | None = None,
+    discipline: str | None = None,
     location: str | None = None,
     notes: str | None = None,
     subject_user_id: "str | None | _Unset" = _UNSET,
@@ -553,12 +564,13 @@ async def update_import_draft_details(
             SET title = ?,
                 date = ?,
                 training_type = ?,
+                discipline = ?,
                 location = ?,
                 notes = ?,
                 updated_at = ?
             WHERE draft_id = ?
             """,
-            (title, date, training_type, location, notes, utc_now_iso(), draft_id),
+            (title, date, training_type, discipline, location, notes, utc_now_iso(), draft_id),
         )
     else:
         await conn.execute(
@@ -567,6 +579,7 @@ async def update_import_draft_details(
             SET title = ?,
                 date = ?,
                 training_type = ?,
+                discipline = ?,
                 location = ?,
                 notes = ?,
                 subject_user_id = ?,
@@ -577,6 +590,7 @@ async def update_import_draft_details(
                 title,
                 date,
                 training_type,
+                discipline,
                 location,
                 notes,
                 subject_user_id,
@@ -1371,6 +1385,7 @@ async def finalize_import_draft(
             SET title = ?,
                 date = ?,
                 training_type = ?,
+                discipline = ?,
                 location = ?,
                 map_id = ?,
                 gpx_path = ?,
@@ -1383,6 +1398,7 @@ async def finalize_import_draft(
                 draft["title"],
                 draft["date"],
                 draft.get("training_type"),
+                draft.get("discipline"),
                 draft.get("location"),
                 map_id,
                 draft.get("track_gpx_path"),
@@ -1407,16 +1423,17 @@ async def finalize_import_draft(
     await conn.execute(
         """
         INSERT INTO trainings (
-            training_id, title, date, training_type, location, map_id, gpx_path,
+            training_id, title, date, training_type, discipline, location, map_id, gpx_path,
             notes, course_controls, track_points, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             training_id,
             draft["title"],
             draft["date"],
             draft.get("training_type"),
+            draft.get("discipline"),
             draft.get("location"),
             map_id,
             draft.get("track_gpx_path"),
