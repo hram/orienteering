@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from portal.db import (
     clear_import_draft_track,
     connect_db,
+    create_clone_import_draft,
     create_edit_import_draft,
     create_import_draft,
     delete_training,
@@ -84,7 +85,11 @@ async def trainings_page(request: Request) -> HTMLResponse:
         await conn.close()
     for training in trainings:
         training["discipline_label"] = DISCIPLINE_LABELS.get(training.get("discipline") or "", "")
-    return templates.TemplateResponse(request, "trainings.html", {"trainings": trainings})
+    return templates.TemplateResponse(
+        request,
+        "trainings.html",
+        {"trainings": trainings, "viewer_is_admin": user.is_admin},
+    )
 
 
 @router.get("/trainings/new", response_class=HTMLResponse)
@@ -118,6 +123,21 @@ async def edit_training(training_id: str) -> RedirectResponse:
     conn = await connect_db(normalize_db_path(config.DB_PATH))
     try:
         draft = await create_edit_import_draft(conn, training_id)
+    finally:
+        await conn.close()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Training not found")
+    return RedirectResponse(
+        f"/trainings/imports/{draft['draft_id']}/details",
+        status_code=303,
+    )
+
+
+@router.get("/trainings/{training_id}/clone")
+async def clone_training(training_id: str) -> RedirectResponse:
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        draft = await create_clone_import_draft(conn, training_id)
     finally:
         await conn.close()
     if draft is None:

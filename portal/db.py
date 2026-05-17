@@ -454,12 +454,42 @@ async def create_edit_import_draft(
     conn: aiosqlite.Connection,
     training_id: str,
 ) -> dict[str, Any] | None:
+    return await _create_import_draft_from_training(
+        conn,
+        training_id,
+        edit_training_id=training_id,
+        include_track=True,
+    )
+
+
+async def create_clone_import_draft(
+    conn: aiosqlite.Connection,
+    training_id: str,
+) -> dict[str, Any] | None:
+    return await _create_import_draft_from_training(
+        conn,
+        training_id,
+        edit_training_id=None,
+        include_track=False,
+    )
+
+
+async def _create_import_draft_from_training(
+    conn: aiosqlite.Connection,
+    training_id: str,
+    *,
+    edit_training_id: str | None,
+    include_track: bool,
+) -> dict[str, Any] | None:
     training = await get_training_import_source(conn, training_id)
     if training is None:
         return None
 
     now = utc_now_iso()
     draft_id = uuid4().hex
+    track_gpx_path = training.get("gpx_path") if include_track else None
+    track_gpx_filename = Path(training["gpx_path"]).name if include_track and training.get("gpx_path") else None
+    track_points = training.get("track_points") if include_track else None
     await conn.execute(
         """
         INSERT INTO training_import_drafts (
@@ -486,10 +516,10 @@ async def create_edit_import_draft(
             training.get("georef_transform"),
             training.get("georef_residuals"),
             training.get("course_controls"),
-            training.get("gpx_path"),
-            Path(training["gpx_path"]).name if training.get("gpx_path") else None,
-            training.get("track_points"),
-            training_id,
+            track_gpx_path,
+            track_gpx_filename,
+            track_points,
+            edit_training_id,
             now,
             now,
         ),

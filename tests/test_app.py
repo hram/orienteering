@@ -321,6 +321,112 @@ def test_finish_training_import_redirects_to_trainings() -> None:
     assert training_id is not None
 
 
+def test_trainings_page_shows_clone_button_for_admin() -> None:
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/trainings/imports",
+            data={"title": "Clone button test", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
+            follow_redirects=False,
+        )
+        draft_id = create_response.headers["location"].split("/")[3]
+        client.post(
+            f"/api/imports/{draft_id}/map-image",
+            files={"file": ("map.png", b"fake-map", "image/png")},
+        )
+        client.post(
+            f"/api/imports/{draft_id}/georef",
+            json={
+                "control_points": [
+                    {"pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"pixel_x": 1000, "pixel_y": 0, "lat": 60.0, "lon": 30.01},
+                    {"pixel_x": 0, "pixel_y": 1000, "lat": 59.99, "lon": 30.0},
+                ]
+            },
+        )
+        client.post(
+            f"/api/imports/{draft_id}/course-controls",
+            json={
+                "controls": [
+                    {"index": 1, "pixel_x": 100, "pixel_y": 100, "lat": 60.0, "lon": 30.0},
+                    {"index": 2, "pixel_x": 200, "pixel_y": 200, "lat": 60.001, "lon": 30.001},
+                ]
+            },
+        )
+        finish_response = client.post(f"/trainings/imports/{draft_id}/finish", follow_redirects=False)
+        list_response = client.get("/trainings")
+
+    assert finish_response.status_code == 303
+    assert list_response.status_code == 200
+    assert "Клонировать" in list_response.text
+    assert "/clone" in list_response.text
+
+
+def test_clone_training_creates_draft_without_track_and_opens_details() -> None:
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/trainings/imports",
+            data={"title": "Clone source", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
+            follow_redirects=False,
+        )
+        draft_id = create_response.headers["location"].split("/")[3]
+        client.post(
+            f"/api/imports/{draft_id}/map-image",
+            files={"file": ("map.png", b"fake-map", "image/png")},
+        )
+        client.post(
+            f"/api/imports/{draft_id}/georef",
+            json={
+                "control_points": [
+                    {"pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"pixel_x": 1000, "pixel_y": 0, "lat": 60.0, "lon": 30.01},
+                    {"pixel_x": 0, "pixel_y": 1000, "lat": 59.99, "lon": 30.0},
+                ]
+            },
+        )
+        client.post(
+            f"/api/imports/{draft_id}/course-controls",
+            json={
+                "controls": [
+                    {"index": 1, "pixel_x": 100, "pixel_y": 100, "lat": 60.0, "lon": 30.0},
+                    {"index": 2, "pixel_x": 200, "pixel_y": 200, "lat": 60.001, "lon": 30.001},
+                ]
+            },
+        )
+        client.post(f"/trainings/imports/{draft_id}/finish", follow_redirects=False)
+
+        con = sqlite3.connect(os.environ["ORIENTEERING_PORTAL_DB_PATH"])
+        try:
+            con.row_factory = sqlite3.Row
+            training_row = con.execute(
+                "SELECT training_id FROM trainings WHERE title = ? ORDER BY created_at DESC",
+                ("Clone source",),
+            ).fetchone()
+        finally:
+            con.close()
+        assert training_row is not None
+
+        clone_response = client.get(f"/trainings/{training_row['training_id']}/clone", follow_redirects=False)
+        assert clone_response.status_code == 303
+        assert clone_response.headers["location"].endswith("/details")
+        details_response = client.get(clone_response.headers["location"])
+
+        draft_id = clone_response.headers["location"].split("/")[3]
+        draft_response = client.get(f"/api/imports/{draft_id}")
+
+    assert draft_response.status_code == 200
+    assert details_response.status_code == 200
+    assert "Видимость" in details_response.text
+    draft = draft_response.json()["draft"]
+    assert draft["edit_training_id"] is None
+    assert draft["track_gpx_path"] is None
+    assert draft["track_gpx_filename"] is None
+    assert draft["track_points"] == []
+    assert draft["map_image_path"] is not None
+    assert draft["georef_transform"] is not None
+    assert draft["course_controls"]
+    assert draft["title"] == "Clone source"
+
+
 def test_training_player_page_renders_after_import_finish() -> None:
     with TestClient(app) as client:
         create_response = client.post(
