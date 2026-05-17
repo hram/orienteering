@@ -1233,25 +1233,26 @@ def test_dashboard_race_position_stats_builds_place_trend() -> None:
                 "self_participant": {"place": "7"},
             },
             {
-                "training_date": "2026-05-11",
-                "training_title": "Без места",
-                "event_name": "Без места",
+                "race_date": "2026-05-11",
+                "training_title": "Свободный старт",
+                "event_name": "Соревнование без тренировки",
                 "group_name": "Ж14",
-                "participants": [{}],
-                "self_participant": {"place": "в/к"},
+                "participants": [{} for _ in range(50)],
+                "self_participant": {"place": "5"},
             },
         ]
     )
 
-    assert stats["race_count"] == 2
-    assert stats["latest_place"] == 7
-    assert stats["latest_participant_count"] == 40
-    assert stats["best_place"] == 7
-    assert stats["best_participant_count"] == 40
+    assert stats["race_count"] == 3
+    assert stats["latest_place"] == 5
+    assert stats["latest_participant_count"] == 50
+    assert stats["best_place"] == 5
+    assert stats["best_participant_count"] == 50
     assert stats["max_place"] == 16
     assert stats["points"][0]["position_ratio"] == 0.8
     assert stats["points"][1]["position_ratio"] == 0.175
-    assert [point["date_label"] for point in stats["points"]] == ["03.05", "10.05"]
+    assert stats["points"][2]["position_ratio"] == 0.1
+    assert [point["date_label"] for point in stats["points"]] == ["03.05", "10.05", "11.05"]
 
 
 def test_reviewed_splits_page_renders_empty_state() -> None:

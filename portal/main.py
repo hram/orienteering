@@ -141,6 +141,18 @@ async def _dashboard_context(request: Request, *, limit: int | None) -> dict:
     problem_splits, trainings = _build_problem_splits(sources)
     visible_splits = problem_splits[:limit] if limit is not None else problem_splits
     visible_training_ids = {split["training_id"] for split in visible_splits}
+    error_reason_stats = _build_error_reason_stats(error_reason_rows)
+    error_reason_partial = (
+        "partials/error_reasons_dashboard_admin.html"
+        if user.is_admin
+        else "partials/error_reasons_dashboard.html"
+    )
+    error_reason_card_html = templates.get_template(error_reason_partial).render(
+        {
+            "error_reason_stats": error_reason_stats,
+            "request": request,
+        }
+    )
     return {
         "problem_splits": visible_splits,
         "problem_split_total": len(problem_splits),
@@ -149,8 +161,10 @@ async def _dashboard_context(request: Request, *, limit: int | None) -> dict:
             for training_id, training in trainings.items()
             if training_id in visible_training_ids
         },
-        "error_reason_stats": _build_error_reason_stats(error_reason_rows),
+        "error_reason_stats": error_reason_stats,
+        "error_reason_card_html": error_reason_card_html,
         "race_position_stats": _build_race_position_stats(sources),
+        "viewer_is_admin": user.is_admin,
     }
 
 
@@ -286,7 +300,9 @@ def _build_race_position_stats(sources: list[dict]) -> dict:
         if place is None:
             continue
         participant_count = len(result.get("participants") or [])
-        date = str(result.get("training_date") or "")
+        date = str(result.get("race_date") or result.get("training_date") or "")
+        if not date:
+            continue
         points.append(
             {
                 "date": date,
@@ -296,7 +312,7 @@ def _build_race_position_stats(sources: list[dict]) -> dict:
                 "position_ratio": round(place / participant_count, 4) if participant_count else None,
                 "group_name": result.get("group_name") or "",
                 "event_name": result.get("event_name") or result.get("training_title") or "Соревнование",
-                "training_title": result.get("training_title") or "Соревнование",
+                "training_title": result.get("training_title") or result.get("event_name") or "Соревнование",
             }
         )
     points.sort(key=lambda point: (point["date"], point["event_name"], point["group_name"]))

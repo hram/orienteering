@@ -25,6 +25,12 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 router = APIRouter()
 
 
+def _require_admin(request: Request) -> None:
+    user = getattr(request.state, "user", None)
+    if user is None or not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
 class SplitReviewKey(BaseModel):
     training_id: str
     race_result_id: str | None = None
@@ -40,6 +46,7 @@ class SaveSplitReviewPayload(SplitReviewKey):
 
 @router.get("/settings/error-reasons", response_class=HTMLResponse)
 async def error_reasons_page(request: Request) -> HTMLResponse:
+    _require_admin(request)
     conn = await connect_db(normalize_db_path(config.DB_PATH))
     try:
         reasons = await list_error_reasons(conn)
@@ -53,7 +60,8 @@ async def error_reasons_page(request: Request) -> HTMLResponse:
 
 
 @router.post("/settings/error-reasons")
-async def create_error_reason_route(label: str = Form(...)) -> RedirectResponse:
+async def create_error_reason_route(request: Request, label: str = Form(...)) -> RedirectResponse:
+    _require_admin(request)
     normalized_label = label.strip()
     if not normalized_label:
         raise HTTPException(status_code=400, detail="Reason label is required")
@@ -67,10 +75,12 @@ async def create_error_reason_route(label: str = Form(...)) -> RedirectResponse:
 
 @router.post("/settings/error-reasons/{reason_id}")
 async def update_error_reason_route(
+    request: Request,
     reason_id: str,
     label: str = Form(...),
     is_active: str | None = Form(None),
 ) -> RedirectResponse:
+    _require_admin(request)
     normalized_label = label.strip()
     if not normalized_label:
         raise HTTPException(status_code=400, detail="Reason label is required")

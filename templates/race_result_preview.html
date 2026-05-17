@@ -40,6 +40,7 @@
             </div>
             <form class="form-stack" action="{% if training %}/trainings/{{ training.training_id }}/race-result/import/save{% else %}/race-results/import/save{% endif %}" method="post">
               <input type="hidden" name="url" value="{{ url }}">
+              <input type="hidden" name="race_date" value="{{ race_date or '' }}">
               <input type="hidden" name="group_name" value="{{ group.name }}">
               <label>
                 Кто я в этой группе

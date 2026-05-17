@@ -32,6 +32,7 @@
                 <div>
                   <strong>{{ result.event_name }}</strong>
                   <span>
+                    {% if result.race_date %}{{ result.race_date }} · {% endif %}
                     {{ result.group_name }}
                     · {{ result.participant_count }} участников
                     {% if result.self_participant %} · Я: {{ result.self_participant.name }}{% endif %}

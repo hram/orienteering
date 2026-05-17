@@ -25,6 +25,10 @@
       <section class="panel">
         <form class="form-stack" action="{% if training %}/trainings/{{ training.training_id }}/race-result/import/preview{% else %}/race-results/import/preview{% endif %}" method="post">
           <label>
+            Дата соревнования
+            <input name="race_date" type="date" value="{{ race_date or '' }}" required>
+          </label>
+          <label>
             URL протокола
             <input name="url" type="url" value="{{ url }}" placeholder="https://orgeo.ru/event/info/52808" required>
           </label>
@@ -52,6 +56,7 @@
                   <div>
                     <strong>{{ result.event_name }}</strong>
                     <span>
+                      {% if result.race_date %}{{ result.race_date }} · {% endif %}
                       {{ result.group_name }}
                       · {{ result.participant_count }} участников
                       {% if result.self_participant %} · Я: {{ result.self_participant.name }}{% endif %}

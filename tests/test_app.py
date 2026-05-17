@@ -6,6 +6,7 @@ import sqlite3
 
 from fastapi.testclient import TestClient
 
+from portal.auth import USER_COOKIE_NAME
 from portal.main import app
 from tests.conftest import fetch_user_id
 
@@ -49,6 +50,15 @@ def test_training_import_wizard_starts_with_details_step() -> None:
     assert 'form="training-details-form">К карте' in response.text
 
 
+def test_race_result_import_page_has_race_date_field() -> None:
+    with TestClient(app) as client:
+        response = client.get("/race-results/import")
+
+    assert response.status_code == 200
+    assert 'name="race_date" type="date"' in response.text
+    assert "Дата соревнования" in response.text
+
+
 def test_training_import_requires_discipline() -> None:
     with TestClient(app) as client:
         missing = client.post(
@@ -87,6 +97,17 @@ def test_error_reason_settings_page_renders_and_creates_reason() -> None:
     assert create.status_code == 303
     assert create.headers["location"] == "/settings/error-reasons"
     assert "Проверочная причина" in after.text
+
+
+def test_error_reason_settings_button_is_hidden_for_non_admin() -> None:
+    with TestClient(app) as client:
+        client.post("/login", data={"user_id": fetch_user_id("polina")}, follow_redirects=False)
+        page = client.get("/")
+        settings = client.get("/settings/error-reasons")
+
+    assert page.status_code == 200
+    assert "Настройки" not in page.text
+    assert settings.status_code == 403
 
 
 def test_split_error_review_api_saves_catalog_and_custom_reason() -> None:

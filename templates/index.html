@@ -15,7 +15,9 @@
           <p>Тренировки, карты и разбор ориентирования.</p>
         </div>
         <div class="actions">
-          <a class="button" href="/settings/error-reasons">Настройки</a>
+          {% if viewer_is_admin %}
+            <a class="button" href="/settings/error-reasons">Настройки</a>
+          {% endif %}
           <a class="button primary" href="/trainings">Тренировки</a>
           {% include "partials/_user_menu.html" %}
         </div>
@@ -47,7 +49,7 @@
           </article>
         </div>
         <div class="dashboard-column">
-          {% include "partials/error_reasons_dashboard.html" %}
+          {{ error_reason_card_html | safe }}
           {% include "partials/race_positions_dashboard.html" %}
         </div>
       </section>

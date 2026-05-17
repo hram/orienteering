@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS training_import_drafts (
 CREATE TABLE IF NOT EXISTS race_results (
     race_result_id TEXT PRIMARY KEY,
     training_id    TEXT,
+    race_date      TEXT,
     source_url     TEXT NOT NULL,
     event_name     TEXT NOT NULL,
     event_meta     TEXT,
@@ -368,8 +370,11 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
     race_result_columns = {row["name"] for row in await cursor.fetchall()}
     if "training_id" not in race_result_columns:
         await conn.execute("ALTER TABLE race_results ADD COLUMN training_id TEXT")
+    if "race_date" not in race_result_columns:
+        await conn.execute("ALTER TABLE race_results ADD COLUMN race_date TEXT")
     if "kind" not in race_result_columns:
         await conn.execute("ALTER TABLE race_results ADD COLUMN kind TEXT NOT NULL DEFAULT 'course'")
+    await _backfill_race_dates(conn)
     await _deduplicate_split_error_reviews(conn)
     await conn.execute(
         """
@@ -407,6 +412,46 @@ async def _deduplicate_split_error_reviews(conn: aiosqlite.Connection) -> None:
         )
         """
     )
+
+
+async def _backfill_race_dates(conn: aiosqlite.Connection) -> None:
+    cursor = await conn.execute(
+        """
+        SELECT
+            r.race_result_id,
+            r.race_date,
+            r.event_name,
+            r.training_id,
+            t.date AS training_date
+        FROM race_results r
+        LEFT JOIN trainings t ON t.training_id = r.training_id
+        WHERE r.race_date IS NULL OR r.race_date = ''
+        """
+    )
+    rows = await cursor.fetchall()
+    for row in rows:
+        race_date = normalize_race_date(row["training_date"] or row["event_name"])
+        if not race_date:
+            continue
+        await conn.execute(
+            "UPDATE race_results SET race_date = ? WHERE race_result_id = ?",
+            (race_date, row["race_result_id"]),
+        )
+
+
+def normalize_race_date(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date().isoformat()
+    except ValueError:
+        pass
+    match = re.search(r"(\d{2})\.(\d{2})\.(\d{4})", text)
+    if not match:
+        return None
+    day, month, year = match.groups()
+    return f"{year}-{month}-{day}"
 
 
 async def create_import_draft(
@@ -675,23 +720,25 @@ async def list_dashboard_race_results(
             maps.image_path AS map_image_path,
             map_georeferences.transform AS georef_transform
         FROM race_results
-        JOIN trainings ON trainings.training_id = race_results.training_id
+        LEFT JOIN trainings ON trainings.training_id = race_results.training_id
         LEFT JOIN maps ON maps.map_id = trainings.map_id
         LEFT JOIN map_georeferences ON map_georeferences.map_id = trainings.map_id
     """
     if viewer_user_id is None:
         cursor = await conn.execute(
-            base_sql + " ORDER BY trainings.date DESC, race_results.created_at DESC"
+            base_sql
+            + " ORDER BY COALESCE(race_results.race_date, trainings.date) DESC, race_results.created_at DESC"
         )
     else:
         cursor = await conn.execute(
             base_sql
             + """
-            JOIN training_visibility tv
+            LEFT JOIN training_visibility tv
               ON tv.training_id = trainings.training_id AND tv.user_id = ?
             JOIN race_result_visibility rv
               ON rv.race_result_id = race_results.race_result_id AND rv.user_id = ?
-            ORDER BY trainings.date DESC, race_results.created_at DESC
+            WHERE race_results.training_id IS NULL OR tv.user_id IS NOT NULL
+            ORDER BY COALESCE(race_results.race_date, trainings.date) DESC, race_results.created_at DESC
             """,
             (viewer_user_id, viewer_user_id),
         )
@@ -896,6 +943,7 @@ async def save_race_result(
     conn: aiosqlite.Connection,
     *,
     training_id: str | None = None,
+    race_date: str | None = None,
     source_url: str,
     event_name: str,
     event_meta: str | None,
@@ -911,15 +959,16 @@ async def save_race_result(
     await conn.execute(
         """
         INSERT INTO race_results (
-            race_result_id, training_id, source_url, event_name, event_meta,
+            race_result_id, training_id, race_date, source_url, event_name, event_meta,
             group_name, group_subtitle, controls, participants,
             self_row_index, kind, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             race_result_id,
             training_id,
+            race_date,
             source_url,
             event_name,
             event_meta,

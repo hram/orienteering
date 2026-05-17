@@ -22,6 +22,7 @@ from portal.db import (
     list_attachable_race_results,
     list_race_results,
     normalize_db_path,
+    normalize_race_date,
     save_race_result,
 )
 from portal.infrastructure import config
@@ -106,7 +107,7 @@ async def race_result_import_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "race_result_import.html",
-        {"url": "", "error": None, "training": None},
+        {"url": "", "error": None, "training": None, "race_date": ""},
     )
 
 
@@ -117,13 +118,23 @@ async def training_race_result_import_page(training_id: str, request: Request) -
     return templates.TemplateResponse(
         request,
         "race_result_import.html",
-        {"url": "", "error": None, "training": training, "existing_results": existing_results},
+        {
+            "url": "",
+            "error": None,
+            "training": training,
+            "existing_results": existing_results,
+            "race_date": training.get("date") or "",
+        },
     )
 
 
 @router.post("/race-results/import/preview", response_class=HTMLResponse)
-async def race_result_import_preview(request: Request, url: str = Form(...)) -> HTMLResponse:
-    return await _race_result_import_preview(request, url=url, training_id=None)
+async def race_result_import_preview(
+    request: Request,
+    url: str = Form(...),
+    race_date: str | None = Form(None),
+) -> HTMLResponse:
+    return await _race_result_import_preview(request, url=url, training_id=None, race_date=race_date)
 
 
 @router.post("/trainings/{training_id}/race-result/import/preview", response_class=HTMLResponse)
@@ -131,9 +142,15 @@ async def training_race_result_import_preview(
     training_id: str,
     request: Request,
     url: str = Form(...),
+    race_date: str | None = Form(None),
 ) -> HTMLResponse:
-    await _get_training_or_404(training_id)
-    return await _race_result_import_preview(request, url=url, training_id=training_id)
+    training = await _get_training_or_404(training_id)
+    return await _race_result_import_preview(
+        request,
+        url=url,
+        training_id=training_id,
+        race_date=training.get("date"),
+    )
 
 
 async def _race_result_import_preview(
@@ -141,6 +158,7 @@ async def _race_result_import_preview(
     *,
     url: str,
     training_id: str | None,
+    race_date: str | None = None,
     selected_group_name: str | None = None,
     selected_participant_name: str | None = None,
 ) -> HTMLResponse:
@@ -157,6 +175,7 @@ async def _race_result_import_preview(
                 "error": str(error),
                 "training": training,
                 "existing_results": existing_results,
+                "race_date": race_date or (training.get("date") if training else ""),
             },
             status_code=400,
         )
@@ -178,6 +197,7 @@ async def _race_result_import_preview(
             "url": url,
             "protocol": protocol_view,
             "training": training,
+            "race_date": race_date or (training.get("date") if training else ""),
             "selected_group_name": selected_group_name,
             "selected_participant_name": selected_participant_name,
         },
@@ -189,12 +209,14 @@ async def race_result_import_save(
     url: str = Form(...),
     group_name: str = Form(...),
     self_row_index: int = Form(...),
+    race_date: str | None = Form(None),
 ) -> RedirectResponse:
     return await _race_result_import_save(
         training_id=None,
         url=url,
         group_name=group_name,
         self_row_index=self_row_index,
+        race_date=race_date,
     )
 
 
@@ -204,13 +226,16 @@ async def training_race_result_import_save(
     url: str = Form(...),
     group_name: str = Form(...),
     self_row_index: int = Form(...),
+    race_date: str | None = Form(None),
 ) -> RedirectResponse:
-    await _get_training_or_404(training_id)
+    training = await _get_training_or_404(training_id)
     return await _race_result_import_save(
         training_id=training_id,
         url=url,
         group_name=group_name,
         self_row_index=self_row_index,
+        race_date=race_date,
+        training_date=training.get("date"),
     )
 
 
@@ -245,6 +270,8 @@ async def _race_result_import_save(
     url: str,
     group_name: str,
     self_row_index: int,
+    race_date: str | None = None,
+    training_date: str | None = None,
 ) -> RedirectResponse:
     if _is_orgeo_url(url):
         protocol = await asyncio.to_thread(_load_orgeo_full_protocol, url, group_name)
@@ -260,11 +287,18 @@ async def _race_result_import_save(
     if self_participant is None:
         raise HTTPException(status_code=404, detail="Participant not found in group")
 
+    resolved_race_date = _resolve_race_date(
+        race_date,
+        training_date=training_date,
+        event_name=protocol.event_name,
+    )
+
     conn = await connect_db(normalize_db_path(config.DB_PATH))
     try:
         result = await save_race_result(
             conn,
             training_id=training_id,
+            race_date=resolved_race_date,
             source_url=url,
             event_name=protocol.event_name,
             event_meta=protocol.event_meta,
@@ -278,6 +312,21 @@ async def _race_result_import_save(
     finally:
         await conn.close()
     return RedirectResponse(f"/race-results/{result['race_result_id']}", status_code=303)
+
+
+def _resolve_race_date(
+    race_date: str | None,
+    *,
+    training_date: str | None,
+    event_name: str,
+) -> str | None:
+    normalized_training_date = normalize_race_date(training_date)
+    if normalized_training_date:
+        return normalized_training_date
+    normalized = normalize_race_date(race_date)
+    if normalized:
+        return normalized
+    return normalize_race_date(event_name)
 
 
 @router.get("/race-results/{race_result_id}", response_class=HTMLResponse)
