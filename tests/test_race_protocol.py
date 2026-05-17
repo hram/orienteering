@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 
 from fastapi.testclient import TestClient
@@ -70,6 +72,130 @@ PDF_PROTOCOL_TEXT = """Чемпионат и Первенство Санкт-П�
 № Фамилия, имя Коллектив ГР Разряд Номер Результат Отставание Место 31 34 35 38 40 46 47 48 50 F
 1 ЛЕКОНЦЕВ АЛЕКСАНДР ДЮНЫ-Сестрорецк, ГорСЮТур 1989 б/р 343 00:25:58 1 00:01:53 (1)00:01:53 (1) 00:02:05 (1)00:03:58 (1) 00:04:54 (1)00:08:52 (1) 00:02:25 (1)00:11:17 (1) 00:02:34 (1)00:13:51 (1) 00:06:25 (1)00:20:16 (1) 00:01:34 (1)00:21:50 (1) 00:01:33 (1)00:23:23 (1) 00:02:22 (1)00:25:45 (1) 00:00:1200:25:58 (1)
 """
+
+ORGEO_INFO_HTML = """<!doctype html>
+<html><head>
+<meta itemprop="name" content="Кубок Белых Ночей 11 этап">
+<meta itemprop="description" content="16.05.2026 состоится событие Кубок Белых Ночей 11 этап.">
+</head><body></body></html>
+"""
+
+ORGEO_EXPORT_JSON = json.dumps(
+    {
+        "event_id": "52808",
+        "sub_id": "1",
+        "has_score": False,
+        "finish": [
+            {
+                "group_name": "ЖС",
+                "bib": "30",
+                "name": "Гусак Алла",
+                "team": "Белые Ночи - Гусаки",
+                "start": "12:16:33",
+                "finish": "00:42:08",
+                "place": 1,
+                "diff": "+00:00",
+                "spl": "00:02:05|31|00:03:29|32|",
+                "spl_comment": "10:47/km|31|15:45/km|32|",
+            },
+            {
+                "group_name": "ЖС",
+                "bib": "96",
+                "name": "Семешкина Мария",
+                "team": "WHITE WOLVES",
+                "start": "12:00:12",
+                "finish": "00:51:20",
+                "place": 2,
+                "diff": "+09:12",
+                "spl": "00:02:06|31|00:03:26|32|",
+                "spl_comment": "10:52/km|31|15:32/km|32|",
+            },
+            {
+                "group_name": "ЖС",
+                "bib": "155",
+                "name": "Храмова Полина",
+                "team": "ДТ Пушкин",
+                "start": "12:18:00",
+                "finish": "00:54:10",
+                "place": 9,
+                "diff": "+12:02",
+                "spl": "00:02:30|31|00:04:00|32|",
+                "spl_comment": "12:00/km|31|16:00/km|32|",
+            },
+            {
+                "group_name": "ЖВ",
+                "bib": "10",
+                "name": "Иванова Анна",
+                "team": "Команда",
+                "start": "12:10:00",
+                "finish": "00:40:00",
+                "place": 1,
+                "diff": "+00:00",
+                "spl": "00:01:50|31|00:02:30|32|",
+                "spl_comment": "11:00/km|31|14:00/km|32|",
+            },
+        ],
+    },
+    ensure_ascii=False,
+)
+
+ORGEO_LIVE_JSON = json.dumps(
+    {
+        "event_id": "52808",
+        "sub_id": "1",
+        "finish": [
+            {
+                "dist": "ЖС",
+                "number": "30",
+                "name": "Гусак Алла",
+                "team": "Белые Ночи - Гусаки",
+                "start": "12:16:33",
+                "finish": "00:42:08",
+                "place": 1,
+                "diff": "+00:00",
+                "spl": "00:02:05|31|00:03:29|32|",
+                "spl_comment": "10:47/km|31|15:45/km|32|",
+            },
+            {
+                "dist": "ЖС",
+                "number": "96",
+                "name": "Семешкина Мария",
+                "team": "WHITE WOLVES",
+                "start": "12:00:12",
+                "finish": "00:51:20",
+                "place": 2,
+                "diff": "+09:12",
+                "spl": "00:02:06|31|00:03:26|32|",
+                "spl_comment": "10:52/km|31|15:32/km|32|",
+            },
+            {
+                "dist": "ЖС",
+                "number": "155",
+                "name": "Храмова Полина",
+                "team": "ДТ Пушкин",
+                "start": "12:18:00",
+                "finish": "00:54:10",
+                "place": 9,
+                "diff": "+12:02",
+                "spl": "00:02:30|31|00:04:00|32|",
+                "spl_comment": "12:00/km|31|16:00/km|32|",
+            },
+            {
+                "dist": "ЖВ",
+                "number": "10",
+                "name": "Иванова Анна",
+                "team": "Команда",
+                "start": "12:10:00",
+                "finish": "00:40:00",
+                "place": 1,
+                "diff": "+00:00",
+                "spl": "00:01:50|31|00:02:30|32|",
+                "spl_comment": "11:00/km|31|14:00/km|32|",
+            },
+        ],
+    },
+    ensure_ascii=False,
+)
 
 
 def test_detect_protocol_format() -> None:
@@ -640,6 +766,70 @@ def test_prepare_race_result_view_uses_first_cumulative_as_split_for_virtual_lea
     assert result["participants"][0]["splits"][0]["leader_gap_text"] == "+00:30"
 
 
+def test_pace_distribution_uses_virtual_leader_splits() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "self_row_index": 0,
+        "controls": [
+            {"distance_meters": 100},
+            {"distance_meters": 200},
+            {"distance_meters": 300},
+        ],
+        "participants": [
+            {
+                "row_index": 0,
+                "name": "Я",
+                "result": "00:05:00",
+                "splits": [
+                    {"label": "1", "cumulative": {"time": "1:00", "seconds": 60}},
+                    {"label": "2", "split": {"time": "2:00", "seconds": 120}},
+                    {"label": "Ф", "split": {"time": "2:00", "seconds": 120}},
+                ],
+            },
+            {
+                "row_index": 1,
+                "name": "Лидер",
+                "result": "00:03:30",
+                "splits": [
+                    {"label": "1", "cumulative": {"time": "0:30", "seconds": 30}},
+                    {"label": "2", "split": {"time": "1:00", "seconds": 60}},
+                    {"label": "Ф", "split": {"time": "2:00", "seconds": 120}},
+                ],
+            },
+        ],
+    }
+
+    _prepare_race_result_view(result)
+
+    distribution = result["pace_distribution"]
+    assert distribution["leader_name"] == "Идеальный лидер"
+    assert distribution["split_count"] == 3
+    assert [point["pace_seconds"] for point in distribution["points"]] == [300, 300, 400]
+    assert distribution["min"] == 300
+    assert distribution["max"] == 400
+    assert distribution["mean"] == 333
+    assert distribution["median"] == 300
+
+
+def test_pace_distribution_buckets_match_mockup_range() -> None:
+    from portal.routers.race_results import _pace_distribution_view
+
+    leader = {
+        "name": "Идеальный лидер",
+        "splits": [
+            {"label": str(index + 1), "split": {"seconds": seconds}}
+            for index, seconds in enumerate([429, 512, 535, 473, 643, 300, 391, 337, 349, 330, 408, 541, 476, 426])
+        ],
+    }
+    controls = [{"distance_meters": 1000} for _ in leader["splits"]]
+
+    distribution = _pace_distribution_view(leader, controls)
+
+    assert distribution["bucket_size"] == 60
+    assert [bucket["from"] for bucket in distribution["buckets"]] == [270, 330, 390, 450, 510, 570, 630]
+
+
 def test_prepare_race_result_view_marks_relative_place_gaps() -> None:
     from portal.routers.race_results import _prepare_race_result_view
 
@@ -683,6 +873,29 @@ def test_prepare_race_result_view_builds_reachability_chart() -> None:
     assert chart["points"][0]["x_seconds"] == 40
     assert chart["points"][1]["is_self"] is True
     assert all(point["place"] <= 19 for point in chart["points"])
+
+
+def test_load_orgeo_live_protocol(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    def fake_fetch(url: str) -> str:
+        if url == "https://orgeo.ru/event/info/52808":
+            return ORGEO_INFO_HTML
+        if url == "https://orgeo.ru/event/export/event_id/52808/sub_id/1/format/json":
+            return ORGEO_EXPORT_JSON
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", fake_fetch)
+
+    protocol = asyncio.run(race_results._load_protocol("https://orgeo.ru/event/info/52808"))
+
+    assert protocol.event_name == "Кубок Белых Ночей 11 этап"
+    assert protocol.kind == "course"
+    assert [group["name"] for group in protocol.groups] == ["ЖС", "ЖВ"]
+    group = protocol.groups[0]
+    assert len(group["participants"]) == 3
+    assert group["participants"][2]["name"] == "Храмова Полина"
+    assert group["participants"][2]["result"] == "00:54:10"
 
 
 def test_race_protocol_import_flow(monkeypatch) -> None:
@@ -747,6 +960,9 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert detail.status_code == 200
     assert "Тестовый старт" in detail.text
     assert "race-self-row" in detail.text
+    assert detail.text.count("race-virtual-leader-row") >= 2
+    assert "Идеальный лидер" in detail.text
+    assert "problem-cell-pace" in detail.text
     assert f"/trainings/{training_id}/play" in detail.text
     assert "split-analysis-modal" in detail.text
     assert "split-view-modal" in detail.text
@@ -754,8 +970,11 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert "split_view_dialog.js" in detail.text
     assert "race_result.js" in detail.text
     assert "Анализ достижимости" in detail.text
+    assert "Анализ темпа" in detail.text
     assert "reachability-modal" in detail.text
+    assert "pace-distribution-modal" in detail.text
     assert "race_reachability_dialog.js" in detail.text
+    assert "pace_distribution_dialog.js" in detail.text
     assert 'data-split-label="1"' in detail.text
     assert "race-split-analysis-button" in detail.text
     assert "Просмотр" in detail.text
@@ -770,6 +989,48 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert "Проблемы" in player.text
     assert f'/race-results/{save.headers["location"].split("/")[-1]}' in trainings_after_save.text
     assert f"/trainings/{training_id}/race-result/import" not in trainings_after_save.text
+
+
+def test_orgeo_import_flow(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    def fake_fetch(url: str) -> str:
+        if url == "https://orgeo.ru/event/info/52808":
+            return ORGEO_INFO_HTML
+        if url == "https://orgeo.ru/event/export/event_id/52808/sub_id/1/format/json":
+            return ORGEO_EXPORT_JSON
+        if url == "https://orgeo.ru/online/finish/52808?s=1&d=%D0%96%D0%A1&api=json&test_time=&phone=0":
+            return ORGEO_LIVE_JSON
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", fake_fetch)
+
+    with TestClient(app) as client:
+        preview = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://orgeo.ru/event/info/52808"},
+        )
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://orgeo.ru/event/info/52808",
+                "group_name": "ЖС",
+                "self_row_index": "2",
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert preview.status_code == 200
+    assert "Кубок Белых Ночей 11 этап" in preview.text
+    assert "ЖС" in preview.text
+    assert "Храмова Полина" in preview.text
+    assert save.status_code == 303
+    assert detail.status_code == 200
+    assert "Кубок Белых Ночей 11 этап" in detail.text
+    assert "ЖС" in detail.text
+    assert "Храмова Полина" in detail.text
+    assert "Анализ темпа" in detail.text
 
 
 def test_dashboard_problem_splits_panel_renders(monkeypatch) -> None:

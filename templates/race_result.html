@@ -12,6 +12,7 @@
       id="race-result-workspace"
       class="shell wide race-result-shell"
       data-reachability-chart='{{ result.reachability_chart | tojson }}'
+      data-pace-distribution='{{ result.pace_distribution | tojson }}'
       {% if training %}
         data-race-result-id="{{ result.race_result_id }}"
         data-training-id="{{ training.training_id }}"
@@ -207,6 +208,11 @@
             <strong>Я</strong>
             <span>{% if result.self_participant %}{{ result.self_participant.name }}{% else %}не выбрано{% endif %}</span>
           </div>
+          {% if result.pace_distribution and result.pace_distribution.points %}
+            <div class="race-summary-action">
+              <button class="button compact" type="button" id="open-pace-distribution-btn">Анализ темпа</button>
+            </div>
+          {% endif %}
           {% if result.reachability_chart and result.reachability_chart.points %}
             <div class="race-summary-action">
               <button class="button compact" type="button" id="open-reachability-btn">Анализ достижимости</button>
@@ -237,6 +243,25 @@
               </tr>
             </thead>
             <tbody>
+              {% if result.virtual_leader %}
+                <tr class="race-virtual-leader-row">
+                  <td>{{ result.virtual_leader.place }}</td>
+                  <td class="race-participant-name">
+                    <span>{{ result.virtual_leader.name }}</span>
+                  </td>
+                  <td>{{ result.virtual_leader.display_result }}</td>
+                  {% for split in result.virtual_leader.splits %}
+                    <td>
+                      {% if split.split %}
+                        <div class="problem-cell-row">
+                          <span>{{ split.split.short_time }}</span>
+                          {% if split.split.pace %}<small class="problem-cell-pace">{{ split.split.pace }}</small>{% endif %}
+                        </div>
+                      {% endif %}
+                    </td>
+                  {% endfor %}
+                </tr>
+              {% endif %}
               {% for participant in result.participants %}
                 <tr class="{% if participant.row_index == result.self_row_index %}race-self-row{% endif %}">
                   <td>{{ participant.place }}</td>
@@ -391,6 +416,10 @@
     {% if result.reachability_chart and result.reachability_chart.points %}
       {% include "partials/race_reachability_dialog.html" %}
       <script src="/static/race_reachability_dialog.js"></script>
+    {% endif %}
+    {% if result.pace_distribution and result.pace_distribution.points %}
+      {% include "partials/pace_distribution_dialog.html" %}
+      <script src="/static/pace_distribution_dialog.js"></script>
     {% endif %}
   </body>
 </html>

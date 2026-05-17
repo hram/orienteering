@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
+import json
+import re
 from pathlib import Path
-from urllib.parse import urlencode
+from statistics import median
+from urllib.parse import urlencode, urlparse
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -22,7 +26,7 @@ from portal.db import (
     save_race_result,
 )
 from portal.infrastructure import config
-from portal.services.race_protocol import fetch_race_protocol, parse_race_protocol_html
+from portal.services.race_protocol import ParsedRaceProtocol, fetch_race_protocol, parse_race_protocol_html
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -241,7 +245,10 @@ async def _race_result_import_save(
     group_name: str,
     self_row_index: int,
 ) -> RedirectResponse:
-    protocol = await _load_protocol(url)
+    if _is_orgeo_url(url):
+        protocol = await asyncio.to_thread(_load_orgeo_full_protocol, url, group_name)
+    else:
+        protocol = await _load_protocol(url)
     group = next((item for item in protocol.groups if item["name"] == group_name), None)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found in protocol")
@@ -309,8 +316,412 @@ async def _load_protocol(url: str):
     normalized_url = url.strip()
     if not normalized_url.startswith(("http://", "https://")):
         raise ValueError("URL протокола должен начинаться с http:// или https://")
+    if _is_orgeo_url(normalized_url):
+        return await asyncio.to_thread(_load_orgeo_preview_protocol, normalized_url)
     content = await asyncio.to_thread(fetch_race_protocol, normalized_url)
     return parse_race_protocol_html(content)
+
+
+def _is_orgeo_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.netloc.endswith("orgeo.ru")
+
+
+def _load_orgeo_preview_protocol(url: str) -> ParsedRaceProtocol:
+    event_id, sub_id = _orgeo_event_context(url)
+    info_url = f"https://orgeo.ru/event/info/{event_id}"
+    export_url = f"https://orgeo.ru/event/export/event_id/{event_id}/sub_id/{sub_id}/format/json"
+    info_content = fetch_race_protocol(info_url)
+    export_content = fetch_race_protocol(export_url)
+    event_name = _extract_orgeo_event_name(info_content)
+    event_meta = _extract_orgeo_event_meta(info_content)
+    groups = _parse_orgeo_export_groups(json.loads(export_content))
+    if not event_name:
+        raise ValueError("Не найдено название соревнований в Orgeo")
+    if not groups:
+        raise ValueError("Не найдены группы в Orgeo")
+    return ParsedRaceProtocol(event_name=event_name, event_meta=event_meta, groups=groups, kind="course")
+
+
+def _load_orgeo_full_protocol(url: str, group_name: str) -> ParsedRaceProtocol:
+    event_id, sub_id = _orgeo_event_context(url)
+    info_url = f"https://orgeo.ru/event/info/{event_id}"
+    export_url = f"https://orgeo.ru/online/finish/{event_id}?" + urlencode(
+        {"s": "1", "d": group_name, "api": "json", "test_time": "", "phone": "0"}
+    )
+    info_content = fetch_race_protocol(info_url)
+    export_content = fetch_race_protocol(export_url)
+    event_name = _extract_orgeo_event_name(info_content)
+    event_meta = _extract_orgeo_event_meta(info_content)
+    groups = _parse_orgeo_live_groups(json.loads(export_content), group_name)
+    if not event_name:
+        raise ValueError("Не найдено название соревнований в Orgeo")
+    if not groups:
+        raise ValueError("Не найдены группы в Orgeo")
+    return ParsedRaceProtocol(event_name=event_name, event_meta=event_meta, groups=groups, kind="course")
+
+
+def _orgeo_event_context(url: str) -> tuple[str, int]:
+    parsed = urlparse(url)
+    path = parsed.path or ""
+    export_match = re.search(r"/event/export/event_id/(\d+)/sub_id/(\d+)/format/json/?$", path)
+    if export_match:
+        return export_match.group(1), int(export_match.group(2))
+    info_match = re.search(r"/event/info/(\d+)/?$", path)
+    if info_match:
+        return info_match.group(1), 1
+    live_fragment = (parsed.fragment or "").lstrip("#/")
+    live_match = re.match(r"(\d+)(?:/(\d+))?$", live_fragment)
+    if live_match:
+        return live_match.group(1), int(live_match.group(2) or 1)
+    raise ValueError("Не удалось распознать URL Orgeo")
+
+
+def _extract_orgeo_event_name(content: str) -> str:
+    patterns = (
+        r'<meta\s+itemprop="name"\s+content="([^"]+)"',
+        r'<meta\s+property="og:title"\s+content="Orgeo:\s*([^"]+?)\s*-\s*Инфо\s*-\s*События"',
+        r"<title>Orgeo:\s*(.*?)\s*-\s*Инфо\s*-\s*События</title>",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, content, re.I | re.S)
+        if match:
+            return _clean_orgeo_text(match.group(1))
+    return ""
+
+
+def _extract_orgeo_event_meta(content: str) -> str:
+    patterns = (
+        r'<meta\s+itemprop="description"\s+content="([^"]+)"',
+        r'<meta\s+property="og:description"\s+content="([^"]+)"',
+        r'<meta\s+name="description"\s+content="([^"]+)"',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, content, re.I | re.S)
+        if match:
+            return _clean_orgeo_text(match.group(1))
+    return ""
+
+
+def _parse_orgeo_export_groups(data: dict) -> list[dict]:
+    finish = data.get("finish")
+    if isinstance(finish, list):
+        rows = finish
+    elif isinstance(data, dict):
+        rows = [row for row in data.values() if isinstance(row, dict)]
+    else:
+        rows = []
+    if not rows:
+        raise ValueError("Не найден экспорт результатов Orgeo")
+
+    grouped_rows: dict[str, list[tuple[int, dict]]] = {}
+    group_order: list[str] = []
+    for source_index, row in enumerate(rows):
+        group_name = _orgeo_group_name(row)
+        if not group_name:
+            continue
+        if group_name not in grouped_rows:
+            grouped_rows[group_name] = []
+            group_order.append(group_name)
+        grouped_rows[group_name].append((source_index, row))
+
+    groups: list[dict] = []
+    for group_name in group_order:
+        rows = grouped_rows[group_name]
+        rows.sort(key=lambda item: _orgeo_participant_sort_key(item[0], item[1]))
+        participants = [_parse_orgeo_participant(row_index, row) for row_index, (_, row) in enumerate(rows)]
+        _apply_orgeo_control_distances(participants)
+        _fill_missing_split_ranks(participants)
+        controls = participants[0]["_orgeo_controls"] if participants and participants[0].get("_orgeo_controls") else []
+        for participant in participants:
+            participant.pop("_orgeo_controls", None)
+        groups.append(
+            {
+                "name": group_name,
+                "subtitle": "",
+                "controls": controls,
+                "participants": participants,
+            }
+        )
+    return groups
+
+
+def _parse_orgeo_live_groups(data: dict, group_name: str | None = None) -> list[dict]:
+    finish = data.get("finish")
+    if not isinstance(finish, list):
+        raise ValueError("Не найден экспорт результатов Orgeo")
+
+    grouped_rows: dict[str, list[tuple[int, dict]]] = {}
+    group_order: list[str] = []
+    for source_index, row in enumerate(finish):
+        if not isinstance(row, dict):
+            continue
+        row_group_name = _orgeo_live_group_name(row)
+        if not row_group_name:
+            continue
+        if group_name and row_group_name != group_name:
+            continue
+        if row_group_name not in grouped_rows:
+            grouped_rows[row_group_name] = []
+            group_order.append(row_group_name)
+        grouped_rows[row_group_name].append((source_index, row))
+
+    groups: list[dict] = []
+    for current_group_name in group_order:
+        rows = grouped_rows[current_group_name]
+        rows.sort(key=lambda item: _orgeo_participant_sort_key(item[0], item[1]))
+        participants = [_parse_orgeo_live_participant(row_index, row) for row_index, (_, row) in enumerate(rows)]
+        _apply_orgeo_control_distances(participants)
+        _fill_missing_split_ranks(participants)
+        controls = participants[0]["_orgeo_controls"] if participants and participants[0].get("_orgeo_controls") else []
+        for participant in participants:
+            participant.pop("_orgeo_controls", None)
+        groups.append(
+            {
+                "name": current_group_name,
+                "subtitle": "",
+                "controls": controls,
+                "participants": participants,
+            }
+        )
+    return groups
+
+
+def _fill_missing_split_ranks(participants: list[dict]) -> None:
+    split_count = max((len(participant.get("splits", [])) for participant in participants), default=0)
+    for split_index in range(split_count):
+        ranked_seconds = sorted(
+            {
+                split_time["seconds"]
+                for participant in participants
+                if split_index < len(participant.get("splits", []))
+                for split_time in [participant["splits"][split_index].get("split")]
+                if split_time and split_time.get("seconds") is not None
+            }
+        )
+        ranks = {seconds: index + 1 for index, seconds in enumerate(ranked_seconds)}
+        for participant in participants:
+            splits = participant.get("splits", [])
+            if split_index >= len(splits):
+                continue
+            split_time = splits[split_index].get("split")
+            if not split_time or split_time.get("rank") is not None:
+                continue
+            seconds = split_time.get("seconds")
+            if seconds is not None and seconds in ranks:
+                split_time["rank"] = ranks[seconds]
+
+
+def _orgeo_group_name(row: dict) -> str:
+    for key in ("group_name", "dist", "team"):
+        value = row.get(key)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _orgeo_live_group_name(row: dict) -> str:
+    for key in ("dist", "group_name", "team"):
+        value = row.get(key)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _orgeo_participant_sort_key(source_index: int, row: dict) -> tuple[int, int]:
+    place = row.get("place")
+    try:
+        place_value = int(place)
+    except (TypeError, ValueError):
+        place_value = 10**9
+    return place_value, source_index
+
+
+def _parse_orgeo_participant(row_index: int, row: dict) -> dict:
+    split_pairs = _orgeo_time_code_pairs(str(row.get("spl") or ""))
+    comment_pairs = _orgeo_time_code_pairs(str(row.get("spl_comment") or ""))
+    cumulative_seconds = 0
+    splits: list[dict] = []
+    controls: list[dict] = []
+
+    for split_index, (split_time_text, code) in enumerate(split_pairs):
+        split_seconds = _parse_orgeo_seconds(split_time_text)
+        cumulative_seconds += split_seconds or 0
+        pace_text = comment_pairs[split_index][0] if split_index < len(comment_pairs) else ""
+        pace_seconds = _parse_orgeo_pace_seconds(pace_text)
+        distance_meters = None
+        if split_seconds is not None and pace_seconds and pace_seconds > 0:
+            distance_meters = round(split_seconds * 1000 / pace_seconds)
+        controls.append(
+            {
+                "label": str(split_index + 1),
+                "code": code,
+                "distance_meters": distance_meters,
+            }
+        )
+        splits.append(
+            {
+                "label": str(split_index + 1),
+                "code": code,
+                "distance_meters": distance_meters,
+                "cumulative": {
+                    "raw": _format_seconds_to_time(cumulative_seconds) if split_seconds is not None else "",
+                    "time": _format_seconds_to_time(cumulative_seconds) if split_seconds is not None else "",
+                    "short_time": _normalize_short_time(_format_seconds_to_time(cumulative_seconds)) if split_seconds is not None else "",
+                    "seconds": cumulative_seconds if split_seconds is not None else None,
+                },
+                "split": {
+                    "raw": split_time_text,
+                    "time": split_time_text,
+                    "short_time": _normalize_short_time(split_time_text),
+                    "seconds": split_seconds,
+                    "pace": pace_text or "",
+                },
+            }
+        )
+
+    return {
+        "row_index": row_index,
+        "order": _to_int_or_none(str(row.get("place") or "")),
+        "name": str(row.get("name") or "").strip(),
+        "bib": str(row.get("number") or row.get("bib") or row.get("si") or "").strip(),
+        "result": str(row.get("finish") or row.get("time") or "").strip(),
+        "place": str(row.get("place") or "").strip(),
+        "gap": str(row.get("diff") or "").strip(),
+        "splits": splits,
+        "_orgeo_controls": controls,
+    }
+
+
+def _parse_orgeo_live_participant(row_index: int, row: dict) -> dict:
+    split_pairs = _orgeo_time_code_pairs(str(row.get("spl") or ""))
+    comment_pairs = _orgeo_time_code_pairs(str(row.get("spl_comment") or ""))
+    cumulative_seconds = 0
+    splits: list[dict] = []
+    controls: list[dict] = []
+
+    for split_index, (split_time_text, code) in enumerate(split_pairs):
+        split_seconds = _parse_orgeo_seconds(split_time_text)
+        if split_seconds is not None:
+            cumulative_seconds += split_seconds
+        pace_text = comment_pairs[split_index][0] if split_index < len(comment_pairs) else ""
+        pace_seconds = _parse_orgeo_pace_seconds(pace_text)
+        distance_meters = None
+        if split_seconds is not None and pace_seconds and pace_seconds > 0:
+            distance_meters = round(split_seconds * 1000 / pace_seconds)
+        controls.append(
+            {
+                "label": str(split_index + 1),
+                "code": code,
+                "distance_meters": distance_meters,
+            }
+        )
+        splits.append(
+            {
+                "label": str(split_index + 1),
+                "code": code,
+                "distance_meters": distance_meters,
+                "cumulative": {
+                    "raw": _format_seconds_to_time(cumulative_seconds) if split_seconds is not None else "",
+                    "time": _format_seconds_to_time(cumulative_seconds) if split_seconds is not None else "",
+                    "short_time": _normalize_short_time(_format_seconds_to_time(cumulative_seconds)) if split_seconds is not None else "",
+                    "seconds": cumulative_seconds if split_seconds is not None else None,
+                },
+                "split": {
+                    "raw": split_time_text,
+                    "time": split_time_text,
+                    "short_time": _normalize_short_time(split_time_text),
+                    "seconds": split_seconds,
+                    "pace": pace_text or "",
+                },
+            }
+        )
+
+    return {
+        "row_index": row_index,
+        "order": _to_int_or_none(str(row.get("place") or "")),
+        "name": str(row.get("name") or "").strip(),
+        "bib": str(row.get("number") or row.get("bib") or row.get("si") or "").strip(),
+        "result": str(row.get("finish") or row.get("time") or "").strip(),
+        "place": str(row.get("place") or "").strip(),
+        "gap": str(row.get("diff") or row.get("otm_name") or "").strip(),
+        "splits": splits,
+        "_orgeo_controls": controls,
+    }
+
+
+def _apply_orgeo_control_distances(participants: list[dict]) -> None:
+    if not participants:
+        return
+    control_count = max((len(participant.get("splits", [])) for participant in participants), default=0)
+    controls: list[dict] = []
+    for split_index in range(control_count):
+        distances = [
+            participant["splits"][split_index]["distance_meters"]
+            for participant in participants
+            if split_index < len(participant.get("splits", []))
+            and participant["splits"][split_index].get("distance_meters") is not None
+        ]
+        control_distance = int(round(median(distances))) if distances else None
+        template_split = next(
+            (
+                participant["splits"][split_index]
+                for participant in participants
+                if split_index < len(participant.get("splits", []))
+            ),
+            None,
+        )
+        controls.append(
+            {
+                "label": template_split.get("label", str(split_index + 1)) if template_split else str(split_index + 1),
+                "code": template_split.get("code", "") if template_split else "",
+                "distance_meters": control_distance,
+            }
+        )
+
+    for participant in participants:
+        for split_index, split in enumerate(participant.get("splits", [])):
+            if split_index < len(controls):
+                split["distance_meters"] = controls[split_index]["distance_meters"]
+        participant["_orgeo_controls"] = controls
+
+
+def _orgeo_time_code_pairs(value: str) -> list[tuple[str, str]]:
+    tokens = [token.strip() for token in value.split("|") if token.strip()]
+    pairs: list[tuple[str, str]] = []
+    for index in range(0, len(tokens) - 1, 2):
+        pairs.append((tokens[index], tokens[index + 1]))
+    return pairs
+
+
+def _parse_orgeo_seconds(value: str) -> int | None:
+    text = value.strip()
+    if not text:
+        return None
+    parts = text.split(":")
+    if not all(part.isdigit() for part in parts):
+        return None
+    numbers = [int(part) for part in parts]
+    if len(numbers) == 2:
+        return numbers[0] * 60 + numbers[1]
+    if len(numbers) == 3:
+        return numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
+    if len(numbers) == 1:
+        return numbers[0]
+    return None
+
+
+def _parse_orgeo_pace_seconds(value: str) -> int | None:
+    match = re.search(r"(\d+:\d{2})(?:\s*/\s*km|/km|km)?$", value.strip(), re.I)
+    if not match:
+        return None
+    return _parse_orgeo_seconds(match.group(1))
+
+
+def _clean_orgeo_text(value: str) -> str:
+    normalized = re.sub(r"(?i)<br\s*/?>", " ", value)
+    normalized = re.sub(r"<[^>]+>", "", normalized)
+    return html_lib.unescape(re.sub(r"\s+", " ", normalized)).strip()
 
 
 async def _get_training_or_404(training_id: str | None) -> dict:
@@ -377,6 +788,7 @@ def _prepare_race_result_view(result: dict) -> None:
     controls = result.get("controls", [])
     result["problem_split_indexes"] = sorted(problem_indexes)
     result["virtual_leader"] = _virtual_leader_participant(participants, leader_split_by_split, controls)
+    result["pace_distribution"] = _pace_distribution_view(result["virtual_leader"], controls)
     result["self_problem_total_gap"] = _self_problem_total_gap(self_participant, leader_split_by_split, problem_indexes)
     result["reachability_chart"] = _reachability_chart_view(result, self_participant)
     if self_participant:
@@ -437,6 +849,7 @@ def _prepare_score_result_view(result: dict) -> None:
     result["problem_split_indexes"] = []
     result["problem_visit_indexes"] = []
     result["virtual_leader"] = None
+    result["pace_distribution"] = {}
     result["self_problem_total_gap"] = ""
     result["reachability_chart"] = {}
 
@@ -751,6 +1164,100 @@ def _virtual_leader_participant(
         "display_result": _format_seconds_to_time(cumulative),
         "splits": splits,
     }
+
+
+def _pace_distribution_view(leader: dict | None, controls: list[dict] | None = None) -> dict:
+    if not leader:
+        return {}
+
+    paces = []
+    for split_index, split in enumerate(leader.get("splits", [])):
+        split_time = _split_stage_time(split, split_index) or {}
+        seconds = split_time.get("seconds")
+        distance = controls[split_index].get("distance_meters") if controls and split_index < len(controls) else None
+        if seconds is None or not distance or distance <= 0:
+            continue
+        pace_seconds = float(seconds) * 1000.0 / float(distance)
+        paces.append(
+            {
+                "label": str(split.get("label") or split_index + 1),
+                "pace_seconds": round(pace_seconds),
+            }
+        )
+
+    if not paces:
+        return {}
+
+    values = [point["pace_seconds"] for point in paces]
+    mean = sum(values) / len(values)
+    sorted_values = sorted(values)
+    mid = len(sorted_values) // 2
+    median = sorted_values[mid] if len(sorted_values) % 2 else (sorted_values[mid - 1] + sorted_values[mid]) / 2
+    std = (sum((value - mean) ** 2 for value in values) / len(values)) ** 0.5
+    bucket_size = _pace_bucket_size(values)
+    half_bucket = bucket_size // 2
+    bucket_min = int(min(values) // bucket_size * bucket_size - half_bucket)
+    bucket_max = int(((max(values) + bucket_size - 1) // bucket_size) * bucket_size + half_bucket)
+    if bucket_max == bucket_min:
+        bucket_max += bucket_size
+
+    buckets = []
+    start = bucket_min
+    while start < bucket_max:
+        end = start + bucket_size
+        count = sum(1 for value in values if start <= value < end or (end == bucket_max and value == bucket_max))
+        mid_value = (start + end) / 2
+        buckets.append(
+            {
+                "from": start,
+                "to": end,
+                "count": count,
+                "tone": _pace_tone(mid_value, mean, std),
+            }
+        )
+        start = end
+
+    return {
+        "leader_name": leader.get("name") or "Абсолютный лидер",
+        "split_count": len(paces),
+        "min": min(values),
+        "max": max(values),
+        "mean": round(mean),
+        "median": round(median),
+        "std": round(std, 2),
+        "green_threshold": round(mean - 0.75 * std),
+        "red_threshold": round(mean + 0.75 * std),
+        "bucket_size": bucket_size,
+        "points": [
+            {
+                **point,
+                "tone": _pace_tone(point["pace_seconds"], mean, std),
+            }
+            for point in paces
+        ],
+        "buckets": buckets,
+    }
+
+
+def _pace_bucket_size(values: list[int]) -> int:
+    import math
+
+    if len(values) < 2:
+        return 30
+    bucket_count = max(round(1 + 3.322 * math.log10(len(values))), 1)
+    raw_bucket = (max(values) - min(values)) / bucket_count
+    rounded = int(round(raw_bucket / 30) * 30) if raw_bucket > 0 else 30
+    return max(30, min(120, rounded))
+
+
+def _pace_tone(value: float, mean: float, std: float) -> str:
+    if std <= 0:
+        return "normal"
+    if value < mean - 0.75 * std:
+        return "fast"
+    if value > mean + 0.75 * std:
+        return "slow"
+    return "normal"
 
 
 def _self_problem_total_gap(
