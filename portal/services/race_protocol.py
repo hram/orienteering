@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.request import Request, urlopen
 
-from pypdf import PdfReader
-
 ProtocolFormat = Literal["js_course", "js_score", "legacy_html", "pdf_text"]
 ProtocolKind = Literal["course", "score"]
 
@@ -70,6 +68,8 @@ def parse_race_protocol_html(content: str) -> ParsedRaceProtocol:
 
 
 def _extract_pdf_text(content: bytes) -> str:
+    from pypdf import PdfReader
+
     reader = PdfReader(BytesIO(content))
     return "\n".join(page.extract_text() or "" for page in reader.pages)
 

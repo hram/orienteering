@@ -191,6 +191,9 @@ async def init_db(db_path: str) -> None:
     Path(normalized).parent.mkdir(parents=True, exist_ok=True)
     conn = await connect_db(normalized)
     try:
+        # Bootstrap runs on a throwaway connection during app startup. Relaxing
+        # sync here cuts SQLite DDL/seed time sharply for fresh test databases.
+        await conn.execute("PRAGMA synchronous = OFF")
         await conn.executescript(SCHEMA)
         await _migrate_schema(conn)
         await _seed_default_users(conn)
@@ -361,62 +364,12 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
     if "track_points" not in training_columns:
         await conn.execute("ALTER TABLE trainings ADD COLUMN track_points TEXT")
 
-    await conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS race_results (
-            race_result_id TEXT PRIMARY KEY,
-            training_id    TEXT,
-            source_url     TEXT NOT NULL,
-            event_name     TEXT NOT NULL,
-            event_meta     TEXT,
-            group_name     TEXT NOT NULL,
-            group_subtitle TEXT,
-            controls       TEXT NOT NULL,
-            participants   TEXT NOT NULL,
-            self_row_index INTEGER NOT NULL,
-            created_at     TEXT NOT NULL,
-            FOREIGN KEY (training_id) REFERENCES trainings(training_id)
-        )
-        """
-    )
     cursor = await conn.execute("PRAGMA table_info(race_results)")
     race_result_columns = {row["name"] for row in await cursor.fetchall()}
     if "training_id" not in race_result_columns:
         await conn.execute("ALTER TABLE race_results ADD COLUMN training_id TEXT")
     if "kind" not in race_result_columns:
         await conn.execute("ALTER TABLE race_results ADD COLUMN kind TEXT NOT NULL DEFAULT 'course'")
-
-    await conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS error_reasons (
-            reason_id  TEXT PRIMARY KEY,
-            label      TEXT NOT NULL,
-            is_active  INTEGER NOT NULL DEFAULT 1,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    await conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS split_error_reviews (
-            review_id          TEXT PRIMARY KEY,
-            training_id        TEXT NOT NULL,
-            race_result_id     TEXT NOT NULL DEFAULT '',
-            split_label        TEXT NOT NULL,
-            from_control_label TEXT NOT NULL,
-            to_control_label   TEXT NOT NULL,
-            reason_id          TEXT,
-            custom_reason      TEXT,
-            reviewed_at        TEXT,
-            created_at         TEXT NOT NULL,
-            updated_at         TEXT NOT NULL,
-            UNIQUE (training_id, race_result_id, split_label, from_control_label, to_control_label),
-            FOREIGN KEY (reason_id) REFERENCES error_reasons(reason_id)
-        )
-        """
-    )
     await _deduplicate_split_error_reviews(conn)
     await conn.execute(
         """
@@ -713,6 +666,10 @@ async def list_dashboard_race_results(
             (viewer_user_id, viewer_user_id),
         )
     rows = await cursor.fetchall()
+    reviewed_split_keys_by_training = await _list_reviewed_split_keys_by_training(
+        conn,
+        training_ids=[row["training_id"] for row in rows if row["training_id"]],
+    )
     results = []
     for row in rows:
         result = race_result_from_row(row)
@@ -725,11 +682,7 @@ async def list_dashboard_race_results(
         result["training_track_points"] = deserialize_json(row["training_track_points"], [])
         result["map_image_path"] = row["map_image_path"]
         result["georef_transform"] = deserialize_json(row["georef_transform"], None)
-        result["reviewed_split_keys"] = await _list_reviewed_split_keys(
-            conn,
-            training_id=result["training_id"],
-            race_result_id=result["race_result_id"],
-        )
+        result["reviewed_split_keys"] = reviewed_split_keys_by_training.get(result["training_id"], set())
         results.append(result)
     return results
 
@@ -850,6 +803,40 @@ async def _list_reviewed_split_keys(
         (row["split_label"], row["from_control_label"], row["to_control_label"])
         for row in await cursor.fetchall()
     }
+
+
+async def _list_reviewed_split_keys_by_training(
+    conn: aiosqlite.Connection,
+    *,
+    training_ids: list[str],
+) -> dict[str, set[tuple[str, str, str]]]:
+    unique_training_ids = sorted({training_id for training_id in training_ids if training_id})
+    if not unique_training_ids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_training_ids)
+    cursor = await conn.execute(
+        f"""
+        SELECT
+            training_id,
+            split_label,
+            from_control_label,
+            to_control_label
+        FROM split_error_reviews
+        WHERE reviewed_at IS NOT NULL
+          AND training_id IN ({placeholders})
+        """,
+        unique_training_ids,
+    )
+    reviewed_split_keys_by_training: dict[str, set[tuple[str, str, str]]] = {}
+    for row in await cursor.fetchall():
+        reviewed_split_keys_by_training.setdefault(row["training_id"], set()).add(
+            (
+                row["split_label"],
+                row["from_control_label"],
+                row["to_control_label"],
+            )
+        )
+    return reviewed_split_keys_by_training
 
 
 async def list_attachable_race_results(

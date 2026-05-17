@@ -12,7 +12,6 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from portal.services import race_grabber
 from portal.db import (
     attach_race_result_to_training,
     connect_db,
@@ -61,6 +60,8 @@ async def race_result_grabber_search(
     participant_query: str = Form(...),
     include_archive: str | None = Form(None),
 ) -> HTMLResponse:
+    from portal.services import race_grabber
+
     include_archive_flag = include_archive == "1"
     search = await asyncio.to_thread(
         race_grabber.find_participant_races,
@@ -757,6 +758,8 @@ def _compact_time(value: str | None) -> str:
 
 
 def _annotate_grabber_matches(search: dict, imported_results: list[dict]) -> None:
+    from portal.services import race_grabber
+
     imported_keys = {
         (
             race_grabber.build_report_id(result.get("source_url", "")),
