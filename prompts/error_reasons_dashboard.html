@@ -1,0 +1,130 @@
+
+<h2 class="sr-only">Макет панели причин ошибок на дашборде</h2>
+
+<style>
+.er-card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1rem 1.25rem; }
+.er-tabs { display: flex; gap: 4px; padding: 3px; background: var(--color-background-secondary); border-radius: var(--border-radius-md); width: fit-content; margin-bottom: 1.25rem; }
+.er-tab { padding: 5px 14px; border-radius: 6px; font-size: 13px; border: none; background: transparent; color: var(--color-text-secondary); cursor: pointer; }
+.er-tab.active { background: var(--color-background-primary); color: var(--color-text-primary); border: 0.5px solid var(--color-border-tertiary); }
+.er-section { display: none; }
+.er-section.active { display: block; }
+.bar-row { display: grid; grid-template-columns: 160px 1fr 32px; gap: 10px; align-items: center; margin-bottom: 10px; }
+.bar-label { font-size: 13px; color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-track { height: 8px; background: var(--color-background-secondary); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
+.bar-count { font-size: 13px; color: var(--color-text-secondary); text-align: right; }
+.top-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 3px 10px; border-radius: var(--border-radius-md); background: var(--color-background-warning); color: var(--color-text-warning); margin-bottom: 1rem; }
+.chart-wrap { position: relative; height: 200px; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--color-text-secondary); }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.insight { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; background: var(--color-background-secondary); border-radius: var(--border-radius-md); margin-top: 1rem; font-size: 13px; color: var(--color-text-secondary); line-height: 1.5; }
+</style>
+
+<div class="er-card">
+  <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+    <div>
+      <p style="font-size: 16px; font-weight: 500; margin: 0 0 2px;">Причины ошибок</p>
+      <p style="font-size: 13px; color: var(--color-text-secondary); margin: 0;">23 разобранных сплита · 4 старта</p>
+    </div>
+    <a href="#" style="font-size: 13px; color: var(--color-text-secondary); text-decoration: none; display: flex; align-items: center; gap: 4px;">все <i class="ti ti-arrow-right" style="font-size: 14px;" aria-hidden="true"></i></a>
+  </div>
+
+  <div class="er-tabs">
+    <button class="er-tab active" onclick="switchTab('top', this)">Топ проблем</button>
+    <button class="er-tab" onclick="switchTab('trend', this)">Динамика</button>
+  </div>
+
+  <div class="er-section active" id="sec-top">
+    <div class="top-badge">
+      <i class="ti ti-alert-triangle" style="font-size: 13px;" aria-hidden="true"></i>
+      главная проблема: плохой выбор пути
+    </div>
+
+    <div id="bars"></div>
+  </div>
+
+  <div class="er-section" id="sec-trend">
+    <div class="chart-wrap">
+      <canvas id="trendChart" role="img" aria-label="Динамика ошибок по стартам. Плохой выбор пути снижается, остальные стабильны."></canvas>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="insight">
+      <i class="ti ti-trending-down" style="font-size: 16px; color: var(--color-text-success); flex-shrink: 0; margin-top: 1px;" aria-hidden="true"></i>
+      «Плохой выбор пути» встречается реже — за 4 старта с 4 до 1 случая. Работа даёт результат.
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const reasons = [
+  {label: 'Плохой выбор пути',     count: 8, color: '#E24B4A'},
+  {label: 'Ошибка направления',    count: 6, color: '#BA7517'},
+  {label: 'Долгий вход в КП',      count: 4, color: '#378ADD'},
+  {label: 'Остановка на карту',    count: 3, color: '#7F77DD'},
+  {label: 'Потеря контакта',       count: 2, color: '#1D9E75'},
+];
+
+const dates = ['26.01', '15.02', '12.03', '26.04'];
+
+const trendData = {
+  'Плохой выбор пути':  [4, 3, 2, 1],
+  'Ошибка направления': [1, 2, 2, 1],
+  'Долгий вход в КП':   [0, 1, 2, 1],
+  'Остановка на карту': [1, 1, 0, 1],
+  'Потеря контакта':    [0, 0, 1, 1],
+};
+
+const max = reasons[0].count;
+const barsEl = document.getElementById('bars');
+reasons.forEach(r => {
+  const pct = Math.round(r.count / max * 100);
+  barsEl.innerHTML += `
+    <div class="bar-row">
+      <span class="bar-label" title="${r.label}">${r.label}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${r.color}"></div></div>
+      <span class="bar-count">${r.count}</span>
+    </div>`;
+});
+
+const legendEl = document.getElementById('legend');
+reasons.forEach(r => {
+  legendEl.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${r.color}"></div>${r.label}</div>`;
+});
+
+const ctx = document.getElementById('trendChart').getContext('2d');
+new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: dates,
+    datasets: reasons.map(r => ({
+      label: r.label,
+      data: trendData[r.label],
+      borderColor: r.color,
+      backgroundColor: r.color + '22',
+      borderWidth: r.label === 'Плохой выбор пути' ? 2.5 : 1.5,
+      pointRadius: 4,
+      tension: 0.3,
+      fill: false,
+    }))
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+    scales: {
+      x: { grid: { color: 'rgba(102,116,124,0.10)' }, ticks: { font: { size: 12 } } },
+      y: { min: 0, ticks: { stepSize: 1, font: { size: 12 } }, grid: { color: 'rgba(102,116,124,0.10)' } }
+    }
+  }
+});
+
+function switchTab(tab, el) {
+  document.querySelectorAll('.er-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.er-section').forEach(s => s.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('sec-' + tab).classList.add('active');
+}
+</script>

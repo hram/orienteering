@@ -1,0 +1,28 @@
+<div id="pace-distribution-modal" class="reachability-modal" hidden>
+  <div class="reachability-backdrop" data-close-pace-distribution></div>
+  <section class="reachability-dialog" role="dialog" aria-modal="true" aria-labelledby="pace-distribution-title">
+    <header class="reachability-header">
+      <div>
+        <h2 id="pace-distribution-title">Анализ темпа</h2>
+        <p id="pace-distribution-subtitle" class="muted"></p>
+      </div>
+      <button id="pace-distribution-close" class="icon-button" type="button" aria-label="Закрыть">
+        <span aria-hidden="true">×</span>
+      </button>
+    </header>
+    <div class="pace-distribution-body">
+      <div id="pace-distribution-stats" class="pace-distribution-stats"></div>
+      <div class="pace-distribution-legend">
+        <span><span class="pace-distribution-dot pace-distribution-dot-normal"></span>Сплит</span>
+        <span><span class="pace-distribution-line pace-distribution-line-mean"></span>Средний</span>
+        <span><span class="pace-distribution-line pace-distribution-line-median"></span>Медиана</span>
+      </div>
+      <div class="pace-distribution-chart-frame">
+        <canvas id="pace-distribution-chart" role="img" aria-label="Распределение темпа по сплитам абсолютного лидера"></canvas>
+      </div>
+      <div class="pace-distribution-scatter-frame">
+        <canvas id="pace-distribution-scatter" role="img" aria-label="Сплиты абсолютного лидера на оси темпа"></canvas>
+      </div>
+    </div>
+  </section>
+</div>

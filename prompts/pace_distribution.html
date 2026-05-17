@@ -1,0 +1,185 @@
+
+<h2 class="sr-only">Распределение темпа по сплитам. Средний темп около 7:00, разброс от 5:00 до 10:43.</h2>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 1.5rem;">
+  <div style="background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 1rem;">
+    <p style="font-size: 13px; color: var(--color-text-secondary); margin: 0 0 4px;">Минимум</p>
+    <p style="font-size: 22px; font-weight: 500; margin: 0; color: var(--color-text-success);">5:00</p>
+  </div>
+  <div style="background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 1rem;">
+    <p style="font-size: 13px; color: var(--color-text-secondary); margin: 0 0 4px;">Средний</p>
+    <p style="font-size: 22px; font-weight: 500; margin: 0;">7:02</p>
+  </div>
+  <div style="background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 1rem;">
+    <p style="font-size: 13px; color: var(--color-text-secondary); margin: 0 0 4px;">Медиана</p>
+    <p style="font-size: 22px; font-weight: 500; margin: 0;">7:06</p>
+  </div>
+  <div style="background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 1rem;">
+    <p style="font-size: 13px; color: var(--color-text-secondary); margin: 0 0 4px;">Максимум</p>
+    <p style="font-size: 22px; font-weight: 500; margin: 0; color: var(--color-text-danger);">10:43</p>
+  </div>
+</div>
+
+<div style="display: flex; gap: 16px; margin-bottom: 8px; font-size: 12px; color: var(--color-text-secondary);">
+  <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 10px; height: 10px; border-radius: 2px; background: #378ADD;"></span>Сплит</span>
+  <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 2px; height: 12px; background: #639922;"></span>Средний</span>
+  <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 2px; height: 12px; border-left: 2px dashed #BA7517;"></span>Медиана</span>
+</div>
+
+<div style="position: relative; width: 100%; height: 280px;">
+  <canvas id="distChart" role="img" aria-label="Распределение темпа по 14 сплитам. Большинство значений от 5:30 до 9:00 мин/км. Выброс 10:43.">
+    Темп сплитов: 7:09, 8:32, 8:55, 7:53, 10:43, 5:00, 6:31, 5:37, 5:49, 5:30, 6:48, 9:01, 7:56, 7:06
+  </canvas>
+</div>
+
+<div style="position: relative; width: 100%; height: 180px; margin-top: 12px;">
+  <canvas id="scatterChart" role="img" aria-label="Каждый сплит как точка на оси темпа. Видно распределение и выброс.">
+    Точки по оси темпа от 5:00 до 10:43.
+  </canvas>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const rawPaces = [
+  {label: '1', pace: 7*60+9},
+  {label: '2', pace: 8*60+32},
+  {label: '3', pace: 8*60+55},
+  {label: '4', pace: 7*60+53},
+  {label: '5', pace: 10*60+43},
+  {label: '6', pace: 5*60+0},
+  {label: '7', pace: 6*60+31},
+  {label: '8', pace: 5*60+37},
+  {label: '9', pace: 5*60+49},
+  {label: '10', pace: 5*60+30},
+  {label: '11', pace: 6*60+48},
+  {label: '12', pace: 9*60+1},
+  {label: '13', pace: 7*60+56},
+  {label: '14', pace: 7*60+6},
+];
+
+const paceVals = rawPaces.map(d => d.pace);
+const mean = paceVals.reduce((a,b) => a+b, 0) / paceVals.length;
+const sorted = [...paceVals].sort((a,b) => a-b);
+const median = (sorted[6] + sorted[7]) / 2;
+
+const fmtPace = (sec) => {
+  const m = Math.floor(sec/60), s = Math.round(sec%60);
+  return `${m}:${String(s).padStart(2,'0')}`;
+};
+
+const minPace = 4*60+30;
+const maxPace = 11*60+30;
+const bucketSize = 60;
+const buckets = [];
+for (let t = minPace; t < maxPace; t += bucketSize) {
+  buckets.push({from: t, to: t + bucketSize, count: 0});
+}
+paceVals.forEach(p => {
+  const b = buckets.find(b => p >= b.from && p < b.to);
+  if (b) b.count++;
+});
+
+const barColors = buckets.map(b => {
+  const mid = (b.from + b.to) / 2;
+  if (mid <= mean - 60) return '#639922';
+  if (mid >= mean + 60) return '#E24B4A';
+  return '#378ADD';
+});
+
+const meanPlugin = {
+  id: 'meanLines',
+  afterDraw(chart) {
+    const {ctx, chartArea, scales} = chart;
+    if (!chartArea) return;
+    [[mean, '#639922', false], [median, '#BA7517', true]].forEach(([val, color, dashed]) => {
+      const x = scales.x.getPixelForValue(val);
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      if (dashed) ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x, chartArea.bottom);
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+};
+
+new Chart(document.getElementById('distChart'), {
+  type: 'bar',
+  plugins: [meanPlugin],
+  data: {
+    labels: buckets.map(b => fmtPace(b.from)),
+    datasets: [{
+      data: buckets.map(b => b.count),
+      backgroundColor: barColors,
+      borderWidth: 0,
+      barPercentage: 0.9,
+      categoryPercentage: 1.0,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: { legend: { display: false }, tooltip: {
+      callbacks: {
+        title(items) { return `Темп ${fmtPace(buckets[items[0].dataIndex].from)}–${fmtPace(buckets[items[0].dataIndex].to)}`; },
+        label(item) { return `Сплитов: ${item.raw}`; }
+      }
+    }},
+    scales: {
+      x: {
+        title: { display: true, text: 'Темп (мин/км)', color: '#888' },
+        ticks: { maxRotation: 0, font: { size: 11 } },
+        grid: { color: 'rgba(102,116,124,0.10)' }
+      },
+      y: {
+        title: { display: true, text: 'Сплитов', color: '#888' },
+        min: 0, ticks: { stepSize: 1 },
+        grid: { color: 'rgba(102,116,124,0.10)' }
+      }
+    }
+  }
+});
+
+new Chart(document.getElementById('scatterChart'), {
+  type: 'scatter',
+  data: {
+    datasets: [{
+      data: rawPaces.map((d, i) => ({x: d.pace, y: 1, label: d.label})),
+      backgroundColor: rawPaces.map(d => {
+        if (d.pace <= mean - 60) return '#639922';
+        if (d.pace >= mean + 60) return '#E24B4A';
+        return '#378ADD';
+      }),
+      borderColor: '#ffffff',
+      borderWidth: 1.5,
+      pointRadius: 8,
+      pointHoverRadius: 10,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label(ctx) { return `Сплит ${ctx.raw.label}: ${fmtPace(ctx.parsed.x)}`; }
+        }
+      }
+    },
+    scales: {
+      x: {
+        min: minPace, max: maxPace,
+        ticks: { callback: v => fmtPace(v), maxTicksLimit: 8, font: { size: 11 } },
+        grid: { color: 'rgba(102,116,124,0.10)' }
+      },
+      y: { display: false, min: 0, max: 2 }
+    }
+  }
+});
+</script>
