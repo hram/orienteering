@@ -190,6 +190,7 @@ async def _race_result_import_preview(
         groups=protocol_groups,
         kind=protocol.kind,
     )
+    _attach_selection_keys(protocol_view.groups)
     return templates.TemplateResponse(
         request,
         "race_result_preview.html",
@@ -208,7 +209,7 @@ async def _race_result_import_preview(
 async def race_result_import_save(
     url: str = Form(...),
     group_name: str = Form(...),
-    self_row_index: int = Form(...),
+    self_row_index: str = Form(...),
     race_date: str | None = Form(None),
 ) -> RedirectResponse:
     return await _race_result_import_save(
@@ -225,7 +226,7 @@ async def training_race_result_import_save(
     training_id: str,
     url: str = Form(...),
     group_name: str = Form(...),
-    self_row_index: int = Form(...),
+    self_row_index: str = Form(...),
     race_date: str | None = Form(None),
 ) -> RedirectResponse:
     training = await _get_training_or_404(training_id)
@@ -269,7 +270,7 @@ async def _race_result_import_save(
     training_id: str | None,
     url: str,
     group_name: str,
-    self_row_index: int,
+    self_row_index: str,
     race_date: str | None = None,
     training_date: str | None = None,
 ) -> RedirectResponse:
@@ -277,13 +278,11 @@ async def _race_result_import_save(
         protocol = await asyncio.to_thread(_load_orgeo_full_protocol, url, group_name)
     else:
         protocol = await _load_protocol(url)
+    _attach_selection_keys(protocol.groups)
     group = next((item for item in protocol.groups if item["name"] == group_name), None)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found in protocol")
-    self_participant = next(
-        (item for item in group["participants"] if item["row_index"] == self_row_index),
-        None,
-    )
+    self_participant = _resolve_selected_participant(group["participants"], self_row_index)
     if self_participant is None:
         raise HTTPException(status_code=404, detail="Participant not found in group")
 
@@ -306,7 +305,7 @@ async def _race_result_import_save(
             group_subtitle=group.get("subtitle") or None,
             controls=group["controls"],
             participants=group["participants"],
-            self_row_index=self_row_index,
+            self_row_index=int(self_participant["row_index"]),
             kind=protocol.kind,
         )
     finally:
@@ -327,6 +326,87 @@ def _resolve_race_date(
     if normalized:
         return normalized
     return normalize_race_date(event_name)
+
+
+def _resolve_selected_participant(participants: list[dict], selected_value: str) -> dict | None:
+    text = str(selected_value or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        index = int(text)
+        participant = next((item for item in participants if item.get("row_index") == index), None)
+        if participant is not None:
+            return participant
+    return next((item for item in participants if item.get("selection_key") == text), None)
+
+
+def _display_place_text(participant: dict) -> str:
+    place = str(participant.get("place") or "").strip()
+    if place:
+        return place
+    bib = str(participant.get("bib") or "").strip()
+    if bib:
+        return bib
+    relay = str(participant.get("relay") or participant.get("relay_team") or "").strip()
+    if relay:
+        return relay
+    row_index = participant.get("row_index")
+    if isinstance(row_index, int):
+        return str(row_index + 1)
+    return ""
+
+
+def _display_result_text(participant: dict, kind: str | None = None) -> str:
+    if kind == "course" and str(participant.get("lap") or "").strip():
+        total_seconds = 0
+        has_split_seconds = False
+        for split_index, split in enumerate(participant.get("splits", [])):
+            split_time = _split_stage_time(split, split_index) or {}
+            seconds = split_time.get("seconds")
+            if seconds is None:
+                return _compact_time(participant.get("result"))
+            total_seconds += seconds
+            has_split_seconds = True
+        if has_split_seconds:
+            return _format_seconds_to_time(total_seconds)
+    return _compact_time(participant.get("result"))
+
+
+def _display_result_seconds(participant: dict) -> int | None:
+    display_result = str(participant.get("display_result") or "").strip()
+    if display_result:
+        seconds = _result_seconds(display_result)
+        if seconds is not None:
+            return seconds
+    return _result_seconds(participant.get("result"))
+
+
+def _participant_result_sort_key(participant: dict) -> tuple[int, int, int]:
+    result_seconds = _display_result_seconds(participant)
+    if result_seconds is None:
+        result_seconds = _result_seconds(participant.get("result"))
+    place = _to_int_or_none(participant.get("place"))
+    row_index = participant.get("row_index")
+    return (
+        result_seconds if result_seconds is not None else 10**9,
+        place if place is not None else 10**9,
+        row_index if isinstance(row_index, int) else 10**9,
+    )
+
+
+def _filter_participants_for_import(participants: list[dict], self_participant: dict) -> list[dict]:
+    self_lap = str(self_participant.get("lap") or "").strip()
+    if not self_lap:
+        return participants
+    lap_values = {
+        str(participant.get("lap") or "").strip()
+        for participant in participants
+        if str(participant.get("lap") or "").strip()
+    }
+    if len(lap_values) <= 1:
+        return participants
+    filtered = [participant for participant in participants if str(participant.get("lap") or "").strip() == self_lap]
+    return filtered or participants
 
 
 @router.get("/race-results/{race_result_id}", response_class=HTMLResponse)
@@ -635,6 +715,9 @@ def _parse_orgeo_participant(row_index: int, row: dict) -> dict:
         "order": _to_int_or_none(str(row.get("place") or "")),
         "name": str(row.get("name") or "").strip(),
         "bib": str(row.get("number") or row.get("bib") or row.get("si") or "").strip(),
+        "team": str(row.get("team") or "").strip(),
+        "relay": str(row.get("relay_team") or "").strip(),
+        "lap": str(row.get("lap") or "").strip(),
         "result": str(row.get("finish") or row.get("time") or "").strip(),
         "place": str(row.get("place") or "").strip(),
         "gap": str(row.get("diff") or "").strip(),
@@ -692,12 +775,36 @@ def _parse_orgeo_live_participant(row_index: int, row: dict) -> dict:
         "order": _to_int_or_none(str(row.get("place") or "")),
         "name": str(row.get("name") or "").strip(),
         "bib": str(row.get("number") or row.get("bib") or row.get("si") or "").strip(),
+        "team": str(row.get("team") or "").strip(),
+        "relay": str(row.get("relay") or "").strip(),
+        "lap": str(row.get("lap") or "").strip(),
         "result": str(row.get("finish") or row.get("time") or "").strip(),
         "place": str(row.get("place") or "").strip(),
         "gap": str(row.get("diff") or row.get("otm_name") or "").strip(),
         "splits": splits,
         "_orgeo_controls": controls,
     }
+
+
+def _attach_selection_keys(groups: list[dict]) -> None:
+    for group in groups:
+        for participant in group.get("participants", []):
+            participant["selection_key"] = _participant_selection_key(participant)
+
+
+def _participant_selection_key(participant: dict) -> str:
+    return "|".join(
+        (
+            _normalize_selection_text(participant.get("name")),
+            _normalize_selection_text(participant.get("team")),
+            _normalize_selection_text(participant.get("bib") or participant.get("number") or participant.get("si")),
+            _normalize_selection_text(participant.get("lap") or participant.get("relay") or participant.get("relay_team")),
+        )
+    )
+
+
+def _normalize_selection_text(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
 
 
 def _apply_orgeo_control_distances(participants: list[dict]) -> None:
@@ -835,6 +942,8 @@ def _prepare_race_result_view(result: dict) -> None:
     leader_split_by_split = _leader_split_seconds_by_split(participants)
     self_row_index = result.get("self_row_index")
     self_participant = next((participant for participant in participants if participant.get("row_index") == self_row_index), None)
+    self_display_result = _display_result_text(self_participant, result.get("kind")) if self_participant else ""
+    self_seconds = _display_result_seconds({"display_result": self_display_result, "result": self_participant.get("result") if self_participant else None})
     hot_gap_indexes, warm_gap_indexes, good_gap_indexes = _classify_gap_indexes(self_participant, leader_split_by_split)
     problem_indexes = hot_gap_indexes | warm_gap_indexes
     controls = result.get("controls", [])
@@ -853,15 +962,19 @@ def _prepare_race_result_view(result: dict) -> None:
             split_time["pace"] = _format_pace(split_time.get("seconds"), distance)
 
     for participant in participants:
-        participant["display_result"] = _compact_time(participant.get("result"))
+        participant["display_place"] = _display_place_text(participant)
+        participant["display_result"] = _display_result_text(participant, result.get("kind"))
         participant["relative_gap_text"] = ""
         participant["relative_gap_tone"] = ""
         if self_participant and participant.get("row_index") != self_row_index:
-            participant_seconds = _result_seconds(participant.get("result"))
-            self_seconds = _result_seconds(self_participant.get("result"))
+            participant_seconds = _display_result_seconds(participant)
             if participant_seconds is not None and self_seconds is not None:
-                participant["relative_gap_text"] = _compact_gap(self_seconds - participant_seconds)
-                participant["relative_gap_tone"] = "hot" if participant_seconds < self_seconds else "good"
+                if result.get("kind") == "course" and any(str(item.get("lap") or "").strip() for item in participants):
+                    participant["relative_gap_text"] = _compact_gap(participant_seconds - self_seconds)
+                    participant["relative_gap_tone"] = "hot" if participant_seconds > self_seconds else "good"
+                else:
+                    participant["relative_gap_text"] = _compact_gap(self_seconds - participant_seconds)
+                    participant["relative_gap_tone"] = "hot" if participant_seconds < self_seconds else "good"
         if participant.get("row_index") != self_row_index:
             continue
         for split_index, split in enumerate(participant.get("splits", [])):
@@ -881,6 +994,12 @@ def _prepare_race_result_view(result: dict) -> None:
                 split["leader_gap_tone"] = "good"
             else:
                 split["leader_gap_tone"] = ""
+
+    if result.get("kind") == "course" and any(str(participant.get("lap") or "").strip() for participant in participants):
+        participants.sort(key=_participant_result_sort_key)
+        for index, participant in enumerate(participants, start=1):
+            participant["place"] = str(index)
+            participant["display_place"] = str(index)
 
 
 def _prepare_score_result_view(result: dict) -> None:
@@ -908,7 +1027,8 @@ def _prepare_score_result_view(result: dict) -> None:
     self_total = _to_int_or_none(self_participant.get("total_points")) if self_participant else None
 
     for participant in participants:
-        participant["display_result"] = _compact_time(participant.get("result"))
+        participant["display_place"] = _display_place_text(participant)
+        participant["display_result"] = _display_result_text(participant, "score")
         participant["relative_gap_text"] = ""
         participant["relative_gap_tone"] = ""
         if (

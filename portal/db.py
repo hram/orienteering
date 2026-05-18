@@ -641,6 +641,15 @@ async def list_trainings(
             SELECT
                 trainings.*,
                 (
+                    SELECT u.display_name
+                    FROM training_visibility tv
+                    JOIN users u ON u.user_id = tv.user_id
+                    WHERE tv.training_id = trainings.training_id
+                      AND u.is_admin = 0
+                    ORDER BY u.display_name
+                    LIMIT 1
+                ) AS subject_display_name,
+                (
                     SELECT race_results.race_result_id
                     FROM race_results
                     WHERE race_results.training_id = trainings.training_id
@@ -656,6 +665,15 @@ async def list_trainings(
             """
             SELECT
                 trainings.*,
+                (
+                    SELECT u.display_name
+                    FROM training_visibility tv
+                    JOIN users u ON u.user_id = tv.user_id
+                    WHERE tv.training_id = trainings.training_id
+                      AND u.is_admin = 0
+                    ORDER BY u.display_name
+                    LIMIT 1
+                ) AS subject_display_name,
                 (
                     SELECT race_results.race_result_id
                     FROM race_results
@@ -1218,6 +1236,22 @@ async def list_error_reasons(conn: aiosqlite.Connection) -> list[dict[str, Any]]
     return [error_reason_from_row(row) for row in await cursor.fetchall()]
 
 
+async def list_users(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        """
+        SELECT user_id, username, display_name, is_admin, created_at
+        FROM users
+        ORDER BY is_admin DESC, display_name, username
+        """
+    )
+    rows = []
+    for row in await cursor.fetchall():
+        user = dict(row)
+        user["is_admin"] = bool(user.get("is_admin"))
+        rows.append(user)
+    return rows
+
+
 async def create_error_reason(conn: aiosqlite.Connection, label: str) -> dict[str, Any]:
     now = utc_now_iso()
     cursor = await conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM error_reasons")
@@ -1246,6 +1280,76 @@ async def get_error_reason(conn: aiosqlite.Connection, reason_id: str) -> dict[s
     )
     row = await cursor.fetchone()
     return error_reason_from_row(row) if row else None
+
+
+async def get_user(conn: aiosqlite.Connection, user_id: str) -> dict[str, Any] | None:
+    cursor = await conn.execute(
+        "SELECT user_id, username, display_name, is_admin, created_at FROM users WHERE user_id = ?",
+        (user_id,),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        return None
+    user = dict(row)
+    user["is_admin"] = bool(user.get("is_admin"))
+    return user
+
+
+async def create_user(
+    conn: aiosqlite.Connection,
+    *,
+    username: str,
+    display_name: str,
+    is_admin: bool = False,
+) -> dict[str, Any]:
+    now = utc_now_iso()
+    user_id = uuid4().hex
+    await conn.execute(
+        """
+        INSERT INTO users (user_id, username, display_name, is_admin, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (user_id, username, display_name, 1 if is_admin else 0, now),
+    )
+    await conn.commit()
+    user = await get_user(conn, user_id)
+    if user is None:
+        raise RuntimeError("User was not created")
+    return user
+
+
+async def update_user(
+    conn: aiosqlite.Connection,
+    user_id: str,
+    *,
+    username: str,
+    display_name: str,
+) -> dict[str, Any] | None:
+    await conn.execute(
+        """
+        UPDATE users
+        SET username = ?, display_name = ?
+        WHERE user_id = ?
+        """,
+        (username, display_name, user_id),
+    )
+    await conn.commit()
+    return await get_user(conn, user_id)
+
+
+async def delete_user(conn: aiosqlite.Connection, user_id: str) -> bool:
+    user = await get_user(conn, user_id)
+    if user is None:
+        return False
+    if user.get("is_admin"):
+        raise ValueError("Admin user cannot be deleted")
+
+    await conn.execute("UPDATE training_import_drafts SET subject_user_id = NULL WHERE subject_user_id = ?", (user_id,))
+    await conn.execute("DELETE FROM training_visibility WHERE user_id = ?", (user_id,))
+    await conn.execute("DELETE FROM race_result_visibility WHERE user_id = ?", (user_id,))
+    await conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+    await conn.commit()
+    return True
 
 
 async def update_error_reason(

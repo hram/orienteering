@@ -20,31 +20,37 @@
         </div>
       </header>
 
-      <section class="panel form-stack">
-        <form class="upload-row" method="post" action="/settings/error-reasons">
-          <input name="label" required placeholder="Новая причина ошибки">
-          <button class="button primary" type="submit">Добавить</button>
-        </form>
-      </section>
+      <div class="settings-layout">
+        {% include "partials/settings_nav.html" %}
 
-      <section class="panel settings-panel">
-        {% if reasons %}
-          <div class="settings-list">
-            {% for reason in reasons %}
-              <form class="settings-row" method="post" action="/settings/error-reasons/{{ reason.reason_id }}">
-                <input name="label" required value="{{ reason.label }}">
-                <label class="settings-checkbox">
-                  <input name="is_active" type="checkbox" value="1" {% if reason.is_active %}checked{% endif %}>
-                  <span>Активна</span>
-                </label>
-                <button class="button compact" type="submit">Сохранить</button>
-              </form>
-            {% endfor %}
-          </div>
-        {% else %}
-          <p class="muted">Причины ошибок пока не добавлены.</p>
-        {% endif %}
-      </section>
+        <div class="settings-main">
+          <section class="panel form-stack">
+            <form class="upload-row" method="post" action="/settings/error-reasons">
+              <input name="label" required placeholder="Новая причина ошибки">
+              <button class="button primary" type="submit">Добавить</button>
+            </form>
+          </section>
+
+          <section class="panel settings-panel">
+            {% if reasons %}
+              <div class="settings-list">
+                {% for reason in reasons %}
+                  <form class="settings-row" method="post" action="/settings/error-reasons/{{ reason.reason_id }}">
+                    <input name="label" required value="{{ reason.label }}">
+                    <label class="settings-checkbox">
+                      <input name="is_active" type="checkbox" value="1" {% if reason.is_active %}checked{% endif %}>
+                      <span>Активна</span>
+                    </label>
+                    <button class="button compact" type="submit">Сохранить</button>
+                  </form>
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="muted">Причины ошибок пока не добавлены.</p>
+            {% endif %}
+          </section>
+        </div>
+      </div>
     </main>
   </body>
 </html>

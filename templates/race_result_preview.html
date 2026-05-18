@@ -42,12 +42,12 @@
               <input type="hidden" name="url" value="{{ url }}">
               <input type="hidden" name="race_date" value="{{ race_date or '' }}">
               <input type="hidden" name="group_name" value="{{ group.name }}">
-              <label>
+                <label>
                 Кто я в этой группе
                 <select name="self_row_index" required>
                   {% for participant in group.participants %}
-                    <option value="{{ participant.row_index }}" {% if group.name == selected_group_name and participant.name == selected_participant_name %}selected{% endif %}>
-                      {{ participant.name }}{% if participant.bib %} · №{{ participant.bib }}{% endif %}{% if is_score and participant.total_points %} · {{ participant.total_points }} очк.{% endif %}{% if participant.result %} · {{ participant.result }}{% endif %}
+                    <option value="{{ participant.selection_key or participant.row_index }}" {% if group.name == selected_group_name and participant.name == selected_participant_name %}selected{% endif %}>
+                      {{ participant.name }}{% if participant.lap %} · этап {{ participant.lap }}{% endif %}{% if participant.bib %} · №{{ participant.bib }}{% endif %}{% if is_score and participant.total_points %} · {{ participant.total_points }} очк.{% endif %}{% if participant.result %} · {{ participant.result }}{% endif %}
                     </option>
                   {% endfor %}
                 </select>

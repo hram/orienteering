@@ -30,6 +30,7 @@
                   <strong>{{ training.title }}</strong>
                   <span>
                     {{ training.date }}
+                    {% if viewer_is_admin and training.subject_display_name %} · {{ training.subject_display_name }}{% endif %}
                     {% if training.discipline_label %} · {{ training.discipline_label }}{% endif %}
                     {% if training.training_type %} · {{ training.training_type }}{% endif %}
                     {% if training.location %} · {{ training.location }}{% endif %}

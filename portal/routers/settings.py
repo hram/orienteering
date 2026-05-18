@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import aiosqlite
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -10,12 +11,17 @@ from pydantic import BaseModel
 from portal.db import (
     connect_db,
     create_error_reason,
+    create_user,
     get_error_reason,
+    get_user,
     get_split_error_review,
     list_error_reasons,
+    list_users,
     normalize_db_path,
+    delete_user,
     save_split_error_review,
     update_error_reason,
+    update_user,
 )
 from portal.infrastructure import config
 
@@ -29,6 +35,11 @@ def _require_admin(request: Request) -> None:
     user = getattr(request.state, "user", None)
     if user is None or not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
+
+
+@router.get("/settings")
+async def settings_root() -> RedirectResponse:
+    return RedirectResponse("/settings/users", status_code=302)
 
 
 class SplitReviewKey(BaseModel):
@@ -55,8 +66,89 @@ async def error_reasons_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "settings_error_reasons.html",
-        {"reasons": reasons},
+        {"reasons": reasons, "active_settings_page": "error-reasons"},
     )
+
+
+@router.get("/settings/users", response_class=HTMLResponse)
+async def users_page(request: Request) -> HTMLResponse:
+    _require_admin(request)
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        users = await list_users(conn)
+    finally:
+        await conn.close()
+    return templates.TemplateResponse(
+        request,
+        "settings_users.html",
+        {"users": users, "active_settings_page": "users"},
+    )
+
+
+@router.post("/settings/users")
+async def create_user_route(request: Request, username: str = Form(...), display_name: str = Form(...)) -> RedirectResponse:
+    _require_admin(request)
+    normalized_username = _normalize_username(username)
+    normalized_display_name = display_name.strip()
+    if not normalized_username or not normalized_display_name:
+        raise HTTPException(status_code=400, detail="Username and display name are required")
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        try:
+            await create_user(conn, username=normalized_username, display_name=normalized_display_name)
+        except aiosqlite.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="User already exists") from exc
+    finally:
+        await conn.close()
+    return RedirectResponse("/settings/users", status_code=303)
+
+
+@router.post("/settings/users/{user_id}")
+async def update_user_route(request: Request, user_id: str, username: str = Form(...), display_name: str = Form(...)) -> RedirectResponse:
+    _require_admin(request)
+    normalized_username = _normalize_username(username)
+    normalized_display_name = display_name.strip()
+    if not normalized_username or not normalized_display_name:
+        raise HTTPException(status_code=400, detail="Username and display name are required")
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        user = await get_user(conn, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if user.get("is_admin"):
+            raise HTTPException(status_code=403, detail="Admin user cannot be edited")
+        try:
+            updated = await update_user(
+                conn,
+                user_id,
+                username=normalized_username,
+                display_name=normalized_display_name,
+            )
+        except aiosqlite.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="User already exists") from exc
+    finally:
+        await conn.close()
+    if updated is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return RedirectResponse("/settings/users", status_code=303)
+
+
+@router.post("/settings/users/{user_id}/delete")
+async def delete_user_route(request: Request, user_id: str) -> RedirectResponse:
+    _require_admin(request)
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        user = await get_user(conn, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if user.get("is_admin"):
+            raise HTTPException(status_code=403, detail="Admin user cannot be deleted")
+        deleted = await delete_user(conn, user_id)
+    finally:
+        await conn.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="User not found")
+    return RedirectResponse("/settings/users", status_code=303)
 
 
 @router.post("/settings/error-reasons")
@@ -123,6 +215,10 @@ def _model_to_dict(model: BaseModel) -> dict:
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
+
+
+def _normalize_username(value: str | None) -> str:
+    return str(value or "").strip().casefold()
 
 
 @router.put("/api/split-error-review")

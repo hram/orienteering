@@ -296,7 +296,7 @@ def _build_race_position_stats(sources: list[dict]) -> dict:
     points = []
     for result in sources:
         self_participant = result.get("self_participant") or {}
-        place = _place_to_int(self_participant.get("place"))
+        place = _dashboard_effective_place(result, self_participant)
         if place is None:
             continue
         participant_count = len(result.get("participants") or [])
@@ -328,6 +328,52 @@ def _build_race_position_stats(sources: list[dict]) -> dict:
         "best_participant_count": best["participant_count"] if best else None,
         "max_place": max((point["place"] for point in points), default=1),
     }
+
+
+def _dashboard_effective_place(result: dict, self_participant: dict) -> int | None:
+    if not self_participant:
+        return None
+    kind = str(result.get("kind") or "").strip()
+    participants = result.get("participants") or []
+    is_relay_course = kind == "course" and any(str(participant.get("lap") or "").strip() for participant in participants)
+    if not is_relay_course:
+        return _place_to_int(self_participant.get("place"))
+
+    self_row_index = self_participant.get("row_index")
+    ranked = []
+    for participant in participants:
+        display_seconds = _dashboard_display_result_seconds(participant, kind)
+        if display_seconds is None:
+            continue
+        ranked.append(
+            (
+                display_seconds,
+                _place_to_int(participant.get("place")) or 10**9,
+                participant.get("row_index") if isinstance(participant.get("row_index"), int) else 10**9,
+                participant,
+            )
+        )
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]))
+    for index, (_, _, _, participant) in enumerate(ranked, start=1):
+        if participant.get("row_index") == self_row_index:
+            return index
+    return _place_to_int(self_participant.get("place"))
+
+
+def _dashboard_display_result_seconds(participant: dict, kind: str | None) -> int | None:
+    if kind == "course" and str(participant.get("lap") or "").strip():
+        total_seconds = 0
+        has_split_seconds = False
+        for split_index, split in enumerate(participant.get("splits", [])):
+            split_time = split.get("split") or {}
+            seconds = split_time.get("seconds")
+            if seconds is None:
+                return race_results._result_seconds(participant.get("result"))
+            total_seconds += int(seconds)
+            has_split_seconds = True
+        if has_split_seconds:
+            return total_seconds
+    return race_results._result_seconds(participant.get("result"))
 
 
 def _place_to_int(value: object) -> int | None:

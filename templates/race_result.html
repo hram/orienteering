@@ -78,9 +78,9 @@
                 </tr>
               </thead>
               <tbody>
-                {% for participant in result.participants %}
-                  <tr class="{% if participant.row_index == result.self_row_index %}race-self-row{% endif %}">
-                    <td>{{ participant.place }}</td>
+              {% for participant in result.participants %}
+                <tr class="{% if participant.row_index == result.self_row_index %}race-self-row{% endif %}">
+                  <td>{{ participant.display_place or participant.place }}</td>
                     <td class="race-participant-name">
                       {% set name_parts = participant.name.split(" ", 1) %}
                       <span>{{ name_parts[0] }}</span>
@@ -245,7 +245,7 @@
             <tbody>
               {% if result.virtual_leader %}
                 <tr class="race-virtual-leader-row">
-                  <td>{{ result.virtual_leader.place }}</td>
+                  <td>{{ result.virtual_leader.display_place or result.virtual_leader.place }}</td>
                   <td class="race-participant-name">
                     <span>{{ result.virtual_leader.name }}</span>
                   </td>
@@ -264,7 +264,7 @@
               {% endif %}
               {% for participant in result.participants %}
                 <tr class="{% if participant.row_index == result.self_row_index %}race-self-row{% endif %}">
-                  <td>{{ participant.place }}</td>
+                  <td>{{ participant.display_place or participant.place }}</td>
                   <td class="race-participant-name">
                     {% set name_parts = participant.name.split(" ", 1) %}
                     <span>{{ name_parts[0] }}</span>
@@ -322,7 +322,7 @@
                 {% if result.virtual_leader %}
                   <tr class="race-virtual-leader-row">
                     <td class="race-participant-name">
-                      <span>{{ result.virtual_leader.place }} {{ result.virtual_leader.name }}</span>
+                      <span>{{ result.virtual_leader.display_place or result.virtual_leader.place }} {{ result.virtual_leader.name }}</span>
                     </td>
                     <td>{{ result.virtual_leader.display_result }}</td>
                     {% for split in result.virtual_leader.splits %}

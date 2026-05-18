@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -110,6 +111,74 @@ def test_error_reason_settings_button_is_hidden_for_non_admin() -> None:
     assert settings.status_code == 403
 
 
+def test_user_settings_page_renders_and_crud_users() -> None:
+    username = f"testuser_{uuid4().hex[:8]}"
+    updated_username = f"{username}_2"
+    display_name = "Тестовый Пользователь"
+    updated_display_name = "Обновленный Пользователь"
+    db_path = os.environ["ORIENTEERING_PORTAL_DB_PATH"]
+
+    with TestClient(app) as client:
+        page = client.get("/settings/users")
+        create = client.post(
+            "/settings/users",
+            data={"username": username, "display_name": display_name},
+            follow_redirects=False,
+        )
+
+        con = sqlite3.connect(db_path)
+        try:
+            con.row_factory = sqlite3.Row
+            created_row = con.execute(
+                "SELECT user_id FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+        finally:
+            con.close()
+        assert created_row is not None
+        user_id = created_row["user_id"]
+
+        update = client.post(
+            f"/settings/users/{user_id}",
+            data={"username": updated_username, "display_name": updated_display_name},
+            follow_redirects=False,
+        )
+        delete = client.post(f"/settings/users/{user_id}/delete", follow_redirects=False)
+
+    con = sqlite3.connect(db_path)
+    try:
+        con.row_factory = sqlite3.Row
+        deleted_row = con.execute(
+            "SELECT user_id FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    finally:
+        con.close()
+
+    assert page.status_code == 200
+    assert "Пользователи" in page.text
+    assert "Евгений" in page.text
+    assert create.status_code == 303
+    assert create.headers["location"] == "/settings/users"
+    assert update.status_code == 303
+    assert delete.status_code == 303
+    assert deleted_row is None
+
+
+def test_user_settings_page_blocks_admin_delete_and_non_admin_access() -> None:
+    admin_id = fetch_user_id("evgeny")
+
+    with TestClient(app) as client:
+        admin_page = client.get("/settings/users")
+        admin_delete = client.post(f"/settings/users/{admin_id}/delete", follow_redirects=False)
+        client.post("/login", data={"user_id": fetch_user_id("polina")}, follow_redirects=False)
+        non_admin_page = client.get("/settings/users")
+
+    assert admin_page.status_code == 200
+    assert admin_delete.status_code == 403
+    assert non_admin_page.status_code == 403
+
+
 def test_split_error_review_api_saves_catalog_and_custom_reason() -> None:
     with TestClient(app) as client:
         reasons_response = client.get("/api/error-reasons")
@@ -206,6 +275,15 @@ def test_training_import_form_creates_draft_and_redirects_to_map_step() -> None:
     assert response.status_code == 303
     assert response.headers["location"].startswith("/trainings/imports/")
     assert response.headers["location"].endswith("/map")
+
+
+def test_training_new_page_includes_relay_type_option() -> None:
+    with TestClient(app) as client:
+        response = client.get("/trainings/new")
+
+    assert response.status_code == 200
+    assert 'value="relay"' in response.text
+    assert "Эстафета" in response.text
 
 
 def test_import_map_page_shows_second_step_of_three() -> None:
@@ -380,6 +458,49 @@ def test_trainings_page_shows_clone_button_for_admin() -> None:
     assert list_response.status_code == 200
     assert "Клонировать" in list_response.text
     assert "/clone" in list_response.text
+
+
+def test_trainings_page_shows_owner_for_admin_only() -> None:
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/trainings/imports",
+            data={"title": "Owner label test", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
+            follow_redirects=False,
+        )
+        draft_id = create_response.headers["location"].split("/")[3]
+        client.post(
+            f"/api/imports/{draft_id}/map-image",
+            files={"file": ("map.png", b"fake-map", "image/png")},
+        )
+        client.post(
+            f"/api/imports/{draft_id}/georef",
+            json={
+                "control_points": [
+                    {"pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"pixel_x": 1000, "pixel_y": 0, "lat": 60.0, "lon": 30.01},
+                    {"pixel_x": 0, "pixel_y": 1000, "lat": 59.99, "lon": 30.0},
+                ]
+            },
+        )
+        client.post(
+            f"/api/imports/{draft_id}/course-controls",
+            json={
+                "controls": [
+                    {"index": 1, "pixel_x": 100, "pixel_y": 100, "lat": 60.0, "lon": 30.0},
+                    {"index": 2, "pixel_x": 200, "pixel_y": 200, "lat": 60.001, "lon": 30.001},
+                ]
+            },
+        )
+        client.post(f"/trainings/imports/{draft_id}/finish", follow_redirects=False)
+
+        admin_page = client.get("/trainings")
+        client.post("/login", data={"user_id": fetch_user_id("polina")}, follow_redirects=False)
+        non_admin_page = client.get("/trainings")
+
+    assert admin_page.status_code == 200
+    assert "· Полина" in admin_page.text
+    assert non_admin_page.status_code == 200
+    assert "· Полина" not in non_admin_page.text
 
 
 def test_clone_training_creates_draft_without_track_and_opens_details() -> None:

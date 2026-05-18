@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Пользователи</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Пользователи</h1>
+          <p>Управление аккаунтами семьи.</p>
+        </div>
+        <div class="actions">
+          <a class="button" href="/trainings">Тренировки</a>
+          <a class="button" href="/race-results">Протоколы</a>
+          {% include "partials/_user_menu.html" %}
+        </div>
+      </header>
+
+      <div class="settings-layout">
+        {% include "partials/settings_nav.html" %}
+
+        <div class="settings-main">
+          <section class="panel form-stack">
+            <form class="upload-row settings-user-create" method="post" action="/settings/users">
+              <input name="username" required placeholder="username">
+              <input name="display_name" required placeholder="Имя">
+              <button class="button primary" type="submit">Добавить</button>
+            </form>
+          </section>
+
+          <section class="panel settings-panel">
+            {% if users %}
+              <div class="settings-list">
+                {% for user in users %}
+                  {% if user.is_admin %}
+                    <div class="settings-row settings-user-row settings-user-row-admin">
+                      <span class="settings-user-field">{{ user.username }}</span>
+                      <span class="settings-user-field">{{ user.display_name }}</span>
+                      <span class="settings-user-badge">Админ</span>
+                      <span class="muted">Удаление запрещено</span>
+                    </div>
+                  {% else %}
+                    <form class="settings-row settings-user-row" method="post" action="/settings/users/{{ user.user_id }}">
+                      <input name="username" required value="{{ user.username }}">
+                      <input name="display_name" required value="{{ user.display_name }}">
+                      <button class="button compact" type="submit">Сохранить</button>
+                      <button
+                        class="icon-button danger"
+                        type="submit"
+                        formaction="/settings/users/{{ user.user_id }}/delete"
+                        formnovalidate
+                        aria-label="Удалить {{ user.display_name }}"
+                        title="Удалить"
+                      >×</button>
+                    </form>
+                  {% endif %}
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="muted">Пока нет пользователей.</p>
+            {% endif %}
+          </section>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

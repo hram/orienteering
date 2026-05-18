@@ -197,6 +197,120 @@ ORGEO_LIVE_JSON = json.dumps(
     ensure_ascii=False,
 )
 
+ORGEO_RELAY_INFO_HTML = """<!doctype html>
+<html><head>
+<meta itemprop="name" content="Relay test">
+<meta itemprop="description" content="Relay test">
+</head><body></body></html>
+"""
+
+ORGEO_RELAY_EXPORT_JSON = json.dumps(
+    {
+        "101.1": {
+            "group_name": "Ж14",
+            "bib": "101.1",
+            "name": "Зекова Анастасия",
+            "team": "Команда А",
+            "lap": "1",
+            "place": 1,
+            "finish": "00:10:00",
+            "spl": "00:02:00|31|00:03:00|32|",
+            "spl_comment": "10:00/km|31|10:00/km|32|",
+        },
+        "102.1": {
+            "group_name": "Ж14",
+            "bib": "102.1",
+            "name": "Иванова Анна",
+            "team": "Команда А",
+            "lap": "1",
+            "place": 2,
+            "finish": "00:11:00",
+            "spl": "00:02:10|31|00:03:10|32|",
+            "spl_comment": "10:30/km|31|10:30/km|32|",
+        },
+        "201.2": {
+            "group_name": "Ж14",
+            "bib": "201.2",
+            "name": "Храмова Полина",
+            "team": "Команда Б",
+            "lap": "2",
+            "place": 3,
+            "finish": "00:12:00",
+            "spl": "00:02:20|31|00:03:20|32|",
+            "spl_comment": "11:00/km|31|11:00/km|32|",
+        },
+        "202.2": {
+            "group_name": "Ж14",
+            "bib": "202.2",
+            "name": "Доронина Полина",
+            "team": "Команда Б",
+            "lap": "2",
+            "place": 4,
+            "finish": "00:13:00",
+            "spl": "00:02:30|31|00:03:30|32|",
+            "spl_comment": "11:30/km|31|11:30/km|32|",
+        },
+    },
+    ensure_ascii=False,
+)
+
+ORGEO_RELAY_LIVE_JSON = json.dumps(
+    {
+        "event_id": "53000",
+        "sub_id": "1",
+        "is_relay": True,
+        "has_score": False,
+        "dist": "Ж14",
+        "finish": [
+            {
+                "dist": "Ж14",
+                "number": "101.1",
+                "name": "Зекова Анастасия",
+                "team": "Команда А",
+                "lap": "1",
+                "place": 1,
+                "diff": "+00:00",
+                "spl": "00:02:00|31|00:03:00|32|",
+                "spl_comment": "10:00/km|31|10:00/km|32|",
+            },
+            {
+                "dist": "Ж14",
+                "number": "102.1",
+                "name": "Иванова Анна",
+                "team": "Команда А",
+                "lap": "1",
+                "place": 2,
+                "diff": "+01:00",
+                "spl": "00:02:10|31|00:03:10|32|",
+                "spl_comment": "10:30/km|31|10:30/km|32|",
+            },
+            {
+                "dist": "Ж14",
+                "number": "201.2",
+                "name": "Храмова Полина",
+                "team": "Команда Б",
+                "lap": "2",
+                "place": 3,
+                "diff": "+02:00",
+                "spl": "00:02:20|31|00:03:20|32|",
+                "spl_comment": "11:00/km|31|11:00/km|32|",
+            },
+            {
+                "dist": "Ж14",
+                "number": "202.2",
+                "name": "Доронина Полина",
+                "team": "Команда Б",
+                "lap": "2",
+                "place": 4,
+                "diff": "+03:00",
+                "spl": "00:02:30|31|00:03:30|32|",
+                "spl_comment": "11:30/km|31|11:30/km|32|",
+            },
+        ],
+    },
+    ensure_ascii=False,
+)
+
 
 def test_detect_protocol_format() -> None:
     assert detect_protocol_format(SAMPLE_PROTOCOL) == "js_course"
@@ -1010,12 +1124,15 @@ def test_orgeo_import_flow(monkeypatch) -> None:
             "/race-results/import/preview",
             data={"url": "https://orgeo.ru/event/info/52808"},
         )
+        options = re.findall(r'<option value="([^"]+)"[^>]*>(.*?)</option>', preview.text, re.S)
+        match = next((value for value, text in options if "Храмова Полина" in text), None)
+        assert match is not None
         save = client.post(
             "/race-results/import/save",
             data={
                 "url": "https://orgeo.ru/event/info/52808",
                 "group_name": "ЖС",
-                "self_row_index": "2",
+                "self_row_index": match,
             },
             follow_redirects=False,
         )
@@ -1031,6 +1148,142 @@ def test_orgeo_import_flow(monkeypatch) -> None:
     assert "ЖС" in detail.text
     assert "Храмова Полина" in detail.text
     assert "Анализ темпа" in detail.text
+
+
+def test_orgeo_relay_import_keeps_full_field_for_leader(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    def fake_fetch(url: str) -> str:
+        if url == "https://orgeo.ru/event/info/53000":
+            return ORGEO_RELAY_INFO_HTML
+        if url == "https://orgeo.ru/event/export/event_id/53000/sub_id/1/format/json":
+            return ORGEO_RELAY_EXPORT_JSON
+        if url == "https://orgeo.ru/online/finish/53000?s=1&d=%D0%9614&api=json&test_time=&phone=0":
+            return ORGEO_RELAY_LIVE_JSON
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", fake_fetch)
+
+    with TestClient(app) as client:
+        preview = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://orgeo.ru/event/info/53000"},
+        )
+        options = re.findall(r'<option value="([^"]+)"[^>]*>(.*?)</option>', preview.text, re.S)
+        match = next((value for value, text in options if "Храмова Полина" in text), None)
+        assert match is not None
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://orgeo.ru/event/info/53000",
+                "group_name": "Ж14",
+                "self_row_index": match,
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert preview.status_code == 200
+    assert "Храмова Полина · этап 2" in preview.text
+    assert save.status_code == 303
+    assert detail.status_code == 200
+    assert "Храмова" in detail.text
+    assert "Полина" in detail.text
+    assert "<strong>Участников</strong>\n            <span>4</span>" in detail.text
+    assert "Зекова" in detail.text
+    assert "Иванова" in detail.text
+    assert "Доронина" in detail.text
+
+
+def test_display_place_falls_back_to_bib() -> None:
+    from portal.routers.race_results import _display_place_text
+
+    assert _display_place_text({"place": "", "bib": "290.2", "row_index": 31}) == "290.2"
+    assert _display_place_text({"place": "", "bib": "", "relay": "290", "row_index": 31}) == "290"
+
+
+def test_display_result_uses_split_total_for_relay() -> None:
+    from portal.routers.race_results import _display_result_text
+
+    participant = {
+        "lap": "2",
+        "result": "01:09:13",
+        "splits": [
+            {"split": {"seconds": 180}},
+            {"split": {"seconds": 305}},
+            {"split": {"seconds": 133}},
+            {"split": {"seconds": 268}},
+            {"split": {"seconds": 191}},
+            {"split": {"seconds": 326}},
+            {"split": {"seconds": 196}},
+            {"split": {"seconds": 83}},
+            {"split": {"seconds": 136}},
+            {"split": {"seconds": 86}},
+        ],
+    }
+
+    assert _display_result_text(participant, "course") == "31:44"
+
+
+def test_course_relay_participants_are_sorted_by_display_result() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "kind": "course",
+        "participants": [
+            {"row_index": 0, "name": "Быстрая", "place": "1", "lap": "1", "result": "00:30:00", "splits": [{"split": {"seconds": 1800}}]},
+            {"row_index": 1, "name": "Медленная", "place": "2", "lap": "2", "result": "00:40:00", "splits": [{"split": {"seconds": 2400}}]},
+        ],
+        "controls": [],
+        "self_row_index": 1,
+    }
+
+    _prepare_race_result_view(result)
+
+    assert [participant["name"] for participant in result["participants"]] == ["Быстрая", "Медленная"]
+    assert result["participants"][0]["relative_gap_text"] == "-10:00"
+    assert result["participants"][0]["relative_gap_tone"] == "good"
+
+
+def test_course_relay_gap_uses_self_display_result_even_if_self_is_later_in_list() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "kind": "course",
+        "participants": [
+            {"row_index": 0, "name": "Аскарова", "place": "1", "lap": "1", "result": "00:30:08", "splits": [{"split": {"seconds": 1808}}]},
+            {"row_index": 1, "name": "Храмова", "place": "2", "lap": "2", "result": "01:09:13", "splits": [{"split": {"seconds": 1904}}]},
+        ],
+        "controls": [],
+        "self_row_index": 1,
+    }
+
+    _prepare_race_result_view(result)
+
+    rival = next(participant for participant in result["participants"] if participant["name"] == "Аскарова")
+    self_participant = next(participant for participant in result["participants"] if participant["name"] == "Храмова")
+    assert self_participant["display_result"] == "31:44"
+    assert rival["relative_gap_text"] == "-01:36"
+
+
+def test_course_relay_display_place_is_sorted_position() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "kind": "course",
+        "participants": [
+            {"row_index": 0, "name": "Третья", "place": "10", "lap": "1", "result": "00:40:00", "splits": [{"split": {"seconds": 2400}}]},
+            {"row_index": 1, "name": "Первая", "place": "1", "lap": "1", "result": "00:30:00", "splits": [{"split": {"seconds": 1800}}]},
+            {"row_index": 2, "name": "Вторая", "place": "2", "lap": "1", "result": "00:35:00", "splits": [{"split": {"seconds": 2100}}]},
+        ],
+        "controls": [],
+        "self_row_index": 1,
+    }
+
+    _prepare_race_result_view(result)
+
+    assert [participant["place"] for participant in result["participants"]] == ["1", "2", "3"]
+    assert [participant["display_place"] for participant in result["participants"]] == ["1", "2", "3"]
 
 
 def test_dashboard_problem_splits_panel_renders(monkeypatch) -> None:
@@ -1253,6 +1506,37 @@ def test_dashboard_race_position_stats_builds_place_trend() -> None:
     assert stats["points"][1]["position_ratio"] == 0.175
     assert stats["points"][2]["position_ratio"] == 0.1
     assert [point["date_label"] for point in stats["points"]] == ["03.05", "10.05", "11.05"]
+
+
+def test_dashboard_race_position_stats_uses_relay_result_rank() -> None:
+    from portal.main import _build_race_position_stats
+
+    participants = [
+        {"row_index": index, "name": f"Участник {index + 1}", "place": str(index + 1), "lap": "1" if index < 6 else "2", "result": f"00:{20 + index:02d}:00", "splits": [{"split": {"seconds": 1200 + index * 10}}]}
+        for index in range(12)
+    ]
+    participants.append(
+        {"row_index": 12, "name": "Храмова", "place": "6", "lap": "2", "result": "01:09:13", "splits": [{"split": {"seconds": 1904}}]}
+    )
+
+    stats = _build_race_position_stats(
+        [
+            {
+                "race_date": "2026-05-17",
+                "training_title": "Relay",
+                "event_name": "Relay",
+                "group_name": "Ж14",
+                "kind": "course",
+                "participants": participants,
+                "self_participant": participants[-1],
+            }
+        ]
+    )
+
+    assert stats["points"][0]["place"] == 13
+    assert stats["latest_place"] == 13
+    assert stats["latest_participant_count"] == 13
+    assert stats["points"][0]["position_ratio"] == round(13 / 13, 4)
 
 
 def test_reviewed_splits_page_renders_empty_state() -> None:
