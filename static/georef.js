@@ -33,7 +33,7 @@
   let leafletMap = null;
   let geoMarkers = [];
   let courseMarkers = [];
-  let courseLine = null;
+  let courseLine = [];
   let fittingPreview = false;
   let currentMode = workspace.dataset.imageUrl ? "georef" : "file";
   let currentTransform = parseExistingObject(workspace.dataset.existingTransform);
@@ -388,15 +388,16 @@
         .bindTooltip(courseControlDisplayLabel(control), {permanent: true, direction: "top", offset: [0, -8]});
     });
 
-    if (courseLine) {
-      courseLine.remove();
-      courseLine = null;
+    if (courseLine.length) {
+      courseLine.forEach((line) => line.remove());
+      courseLine = [];
     }
     if (courseControls.length >= 2) {
-      courseLine = L.polyline(
-        courseControls.map((control) => [control.lat, control.lon]),
-        {color: "#b21f5b", weight: 3, opacity: 0.9}
-      ).addTo(leafletMap);
+      const latLngs = courseControls.map((control) => [control.lat, control.lon]);
+      courseLine = [
+        L.polyline(latLngs, {color: "#000000", weight: 7, opacity: 0.95, dashArray: "10 8"}).addTo(leafletMap),
+        L.polyline(latLngs, {color: "#FF1744", weight: 3, opacity: 1, dashArray: "10 8"}).addTo(leafletMap),
+      ];
     }
   }
 

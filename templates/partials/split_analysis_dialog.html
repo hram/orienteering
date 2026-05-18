@@ -31,6 +31,17 @@
           </svg>
         </button>
         <button id="split-debug-snapshot" class="button compact" type="button">PNG для AI</button>
+        <label class="split-export-control">
+          <span>Видео</span>
+          <select id="split-export-speed" aria-label="Скорость экспорта видео">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="5" selected>5x</option>
+            <option value="10">10x</option>
+          </select>
+        </label>
+        <button id="split-export-video" class="button compact" type="button">Экспорт</button>
+        <span id="split-export-status" class="muted split-export-status"></span>
         <button id="split-analysis-close" class="split-analysis-close" type="button" aria-label="Закрыть">
           <span aria-hidden="true">×</span>
         </button>

@@ -64,11 +64,14 @@
                 <button id="trim-right" class="button compact" type="button">Обрезать справа</button>
                 <button id="trim-undo" class="button compact" type="button" disabled>Undo</button>
                 <button id="save-track" class="button compact primary" type="button" disabled>Сохранить трек</button>
+                <button id="pace-panel-toggle" class="button compact" type="button" aria-expanded="true" aria-controls="pace-panel-body">Свернуть</button>
                 <span id="track-save-status" class="muted"></span>
               </div>
             </div>
-            <div class="pace-chart-frame">
-              <canvas id="pace-chart" class="pace-chart"></canvas>
+            <div id="pace-panel-body" class="pace-panel-body">
+              <div class="pace-chart-frame">
+                <canvas id="pace-chart" class="pace-chart"></canvas>
+              </div>
             </div>
           </div>
         </div>

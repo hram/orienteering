@@ -13,6 +13,9 @@
   const reviewCustomInput = document.querySelector("#split-review-custom");
   const orientToggle = document.querySelector("#split-orient-toggle");
   const debugSnapshotButton = document.querySelector("#split-debug-snapshot");
+  const exportSpeedSelect = document.querySelector("#split-export-speed");
+  const exportVideoButton = document.querySelector("#split-export-video");
+  const exportStatus = document.querySelector("#split-export-status");
   const drawToggleButton = document.querySelector("#split-draw-toggle");
   const drawClearButton = document.querySelector("#split-draw-clear");
   const routeStats = document.querySelector("#split-route-stats");
@@ -42,6 +45,7 @@
   let reasonsLoaded = false;
   let reviewSaveTimer = null;
   let reviewRequestId = 0;
+  let videoExporting = false;
 
   closeButton?.addEventListener("click", close);
   previousButton?.addEventListener("click", () => navigateSplit(-1));
@@ -62,6 +66,7 @@
     }
   });
   debugSnapshotButton?.addEventListener("click", openDebugSnapshot);
+  exportVideoButton?.addEventListener("click", exportSplitVideo);
   modal.addEventListener("click", (event) => {
     if (event.target instanceof Element && event.target.matches("[data-close-split-analysis]")) {
       close();
@@ -153,6 +158,7 @@
       reviewSaveTimer = null;
     }
     reviewRequestId += 1;
+    videoExporting = false;
     active = null;
     athleteMarker = null;
     altRouteLine = null;
@@ -442,11 +448,11 @@
     }
     mapLayer.appendChild(mapImage);
     svg.appendChild(mapLayer);
-    if (trackSegment.length >= 2) {
-      addPolyline(trackSegment.map((point) => point.pixel), "split-track-line");
-    }
     if (coursePoints.length >= 2) {
       addPolyline(coursePoints.map(controlPixel), "split-course-line");
+    }
+    if (trackSegment.length >= 2) {
+      addPolyline(trackSegment.map((point) => point.pixel), "split-track-line");
     }
     altRouteLine = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
     altRouteLine.setAttribute("class", "split-alt-route-line");
@@ -580,6 +586,250 @@
     }
   }
 
+  async function exportSplitVideo() {
+    if (!active || !svg || !exportVideoButton || videoExporting) {
+      return;
+    }
+    if (!("MediaRecorder" in root) || !HTMLCanvasElement.prototype.captureStream) {
+      setExportStatus("Видео не поддерживается браузером");
+      return;
+    }
+    const trackSegment = splitTrackSegment(active.row);
+    const duration = Math.max(active.row.splitSeconds || 0, 0);
+    if (trackSegment.length < 2 || duration <= 0) {
+      setExportStatus("Нет данных трека для видео");
+      return;
+    }
+
+    videoExporting = true;
+    exportVideoButton.disabled = true;
+    setExportStatus("Готовлю...");
+    try {
+      const speed = Number(exportSpeedSelect?.value || 5) || 5;
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 820;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Canvas недоступен");
+      }
+      const baseImage = await splitMapBaseImage(canvas.width, canvas.height);
+      const viewBox = parseViewBox(svg.getAttribute("viewBox"), active.image.naturalWidth, active.image.naturalHeight);
+      const stream = canvas.captureStream(30);
+      const mimeType = supportedVideoMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? {mimeType} : undefined);
+      const chunks = [];
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data?.size) {
+          chunks.push(event.data);
+        }
+      });
+      const stopped = new Promise((resolve) => {
+        recorder.addEventListener("stop", resolve, {once: true});
+      });
+
+      recorder.start();
+      const startedAt = performance.now();
+      const outputDuration = duration / speed;
+      await new Promise((resolve) => {
+        const draw = (timestamp) => {
+          if (!videoExporting) {
+            resolve();
+            return;
+          }
+          const elapsed = Math.max((timestamp - startedAt) / 1000, 0);
+          const seconds = clamp(elapsed * speed, 0, duration);
+          drawExportFrame(context, baseImage, canvas, viewBox, trackSegment, seconds, exportRouteStats());
+          setExportStatus(`Запись ${Math.round(seconds / duration * 100)}%`);
+          if (elapsed >= outputDuration) {
+            resolve();
+            return;
+          }
+          requestAnimationFrame(draw);
+        };
+        draw(startedAt);
+        requestAnimationFrame(draw);
+      });
+      if (recorder.state !== "inactive") {
+        recorder.stop();
+      }
+      await stopped;
+      stream.getTracks().forEach((track) => track.stop());
+      if (!chunks.length) {
+        throw new Error("Браузер не вернул видеоданные");
+      }
+      saveVideoBlob(new Blob(chunks, {type: recorder.mimeType || "video/webm"}));
+      setExportStatus("Готово");
+    } catch (error) {
+      setExportStatus(`Ошибка: ${error.message}`);
+    } finally {
+      videoExporting = false;
+      exportVideoButton.disabled = false;
+    }
+  }
+
+  async function splitMapBaseImage(width, height) {
+    const clonedSvg = svg.cloneNode(true);
+    clonedSvg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clonedSvg.setAttribute("width", String(width));
+    clonedSvg.setAttribute("height", String(height));
+    clonedSvg.querySelector(".split-athlete-marker")?.remove();
+    const mapImage = clonedSvg.querySelector("image");
+    if (mapImage) {
+      mapImage.setAttribute("href", await imageElementDataUrl(active.image));
+    }
+    const source = new XMLSerializer().serializeToString(clonedSvg);
+    const svgUrl = URL.createObjectURL(new Blob([source], {type: "image/svg+xml;charset=utf-8"}));
+    try {
+      return await loadImage(svgUrl);
+    } finally {
+      URL.revokeObjectURL(svgUrl);
+    }
+  }
+
+  function drawExportFrame(context, baseImage, canvas, viewBox, trackSegment, seconds, statsRows) {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#eef3f5";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(baseImage, 0, 0, canvas.width, canvas.height);
+    drawExportRouteStats(context, statsRows, canvas.width, canvas.height);
+    const pixel = interpolateTrackSegmentPixel(trackSegment, seconds);
+    const visiblePoint = currentProjection ? projectPoint(pixel, currentProjection) : pixel;
+    const canvasPoint = viewBoxPointToCanvas(visiblePoint, viewBox, canvas.width, canvas.height);
+    const radius = Math.max(5, Math.min(12, 8 * canvasPoint.scale));
+    context.save();
+    context.shadowColor = "rgba(0, 0, 0, 0.35)";
+    context.shadowBlur = 5;
+    context.shadowOffsetY = 2;
+    context.fillStyle = "#18a0fb";
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = Math.max(2, 4 * canvasPoint.scale);
+    context.beginPath();
+    context.arc(canvasPoint.x, canvasPoint.y, radius, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.restore();
+  }
+
+  function exportRouteStats() {
+    if (!active) {
+      return [];
+    }
+    const courseMeters = Number.isFinite(active.row.distanceMeters) && active.row.distanceMeters > 0
+      ? active.row.distanceMeters
+      : courseLengthMeters();
+    const trackMeters = trackLengthMeters();
+    const altMeters = altRouteLengthMeters();
+    const rows = [];
+    if (Number.isFinite(courseMeters) && courseMeters > 0) {
+      rows.push({color: "#FF1744", label: "прямая", meters: courseMeters});
+    }
+    if (Number.isFinite(trackMeters) && trackMeters > 0) {
+      rows.push({color: "#1565c0", label: "трек", meters: trackMeters});
+    }
+    if (Number.isFinite(altMeters) && altMeters > 0) {
+      rows.push({color: "#b026ff", label: "альт.", meters: altMeters});
+    }
+    return rows;
+  }
+
+  function drawExportRouteStats(context, rows, canvasWidth, canvasHeight) {
+    if (!rows.length) {
+      return;
+    }
+    context.save();
+    context.font = "18px Inter, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+    const paddingX = 16;
+    const paddingY = 12;
+    const rowHeight = 24;
+    const markerWidth = 28;
+    const gap = 10;
+    const width = Math.ceil(Math.max(
+      ...rows.map((row) => markerWidth + gap + context.measureText(`${row.label}: ${formatMeters(row.meters)}`).width),
+    ) + paddingX * 2);
+    const height = paddingY * 2 + rows.length * rowHeight;
+    const x = 24;
+    const y = canvasHeight - height - 24;
+    roundRectPath(context, x, y, width, height, 8);
+    context.fillStyle = "rgba(255, 255, 255, 0.92)";
+    context.fill();
+    context.strokeStyle = "#d7e1e6";
+    context.lineWidth = 1;
+    context.stroke();
+    rows.forEach((row, index) => {
+      const rowY = y + paddingY + index * rowHeight + rowHeight / 2;
+      context.strokeStyle = row.color;
+      context.lineWidth = 5;
+      context.lineCap = "round";
+      context.beginPath();
+      context.moveTo(x + paddingX, rowY);
+      context.lineTo(x + paddingX + markerWidth, rowY);
+      context.stroke();
+      context.fillStyle = "#334147";
+      context.fillText(`${row.label}: ${formatMeters(row.meters)}`, x + paddingX + markerWidth + gap, rowY + 6);
+    });
+    context.restore();
+  }
+
+  function roundRectPath(context, x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    context.beginPath();
+    context.moveTo(x + r, y);
+    context.lineTo(x + width - r, y);
+    context.quadraticCurveTo(x + width, y, x + width, y + r);
+    context.lineTo(x + width, y + height - r);
+    context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+    context.lineTo(x + r, y + height);
+    context.quadraticCurveTo(x, y + height, x, y + height - r);
+    context.lineTo(x, y + r);
+    context.quadraticCurveTo(x, y, x + r, y);
+    context.closePath();
+  }
+
+  function parseViewBox(value, fallbackWidth, fallbackHeight) {
+    const parts = String(value || "").trim().split(/\s+/).map(Number);
+    if (parts.length === 4 && parts.every(Number.isFinite) && parts[2] > 0 && parts[3] > 0) {
+      return {x: parts[0], y: parts[1], width: parts[2], height: parts[3]};
+    }
+    return {x: 0, y: 0, width: fallbackWidth, height: fallbackHeight};
+  }
+
+  function viewBoxPointToCanvas(point, viewBox, canvasWidth, canvasHeight) {
+    const scale = Math.min(canvasWidth / viewBox.width, canvasHeight / viewBox.height);
+    const offsetX = (canvasWidth - viewBox.width * scale) / 2;
+    const offsetY = (canvasHeight - viewBox.height * scale) / 2;
+    return {
+      x: offsetX + (point.pixel_x - viewBox.x) * scale,
+      y: offsetY + (point.pixel_y - viewBox.y) * scale,
+      scale,
+    };
+  }
+
+  function supportedVideoMimeType() {
+    return [
+      "video/webm;codecs=vp9",
+      "video/webm;codecs=vp8",
+      "video/webm",
+    ].find((type) => MediaRecorder.isTypeSupported(type)) || "";
+  }
+
+  function saveVideoBlob(blob) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `split-${String(active?.row?.label || "analysis").replace(/[^\w.-]+/g, "_")}.webm`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  function setExportStatus(message) {
+    if (exportStatus) {
+      exportStatus.textContent = message;
+    }
+  }
+
   async function openDebugSnapshot() {
     if (!active || !debugSnapshotButton) {
       return;
@@ -653,13 +903,19 @@
     marker.setAttribute("orient", "auto-start-reverse");
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
-    path.setAttribute("fill", "#b21f5b");
+    path.setAttribute("fill", "#FF1744");
+    path.setAttribute("stroke", "#000000");
+    path.setAttribute("stroke-width", "1.5");
+    path.setAttribute("stroke-linejoin", "round");
     marker.appendChild(path);
     defs.appendChild(marker);
     svg.appendChild(defs);
   }
 
   function addPolyline(points, className) {
+    if (className === "split-course-line") {
+      addPolylineOutline(points, className);
+    }
     const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
     polyline.setAttribute("class", className);
     polyline.setAttribute("points", points.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "));
@@ -667,7 +923,7 @@
     polyline.setAttribute("stroke-linecap", "round");
     polyline.setAttribute("stroke-linejoin", "round");
     if (className === "split-course-line") {
-      polyline.setAttribute("stroke", "#b21f5b");
+      polyline.setAttribute("stroke", "#FF1744");
       polyline.setAttribute("stroke-width", "5");
       polyline.setAttribute("marker-end", "url(#split-arrow-head)");
     } else {
@@ -675,6 +931,18 @@
       polyline.setAttribute("stroke-width", "6");
     }
     (mapLayer || svg).appendChild(polyline);
+  }
+
+  function addPolylineOutline(points, className) {
+    const outline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    outline.setAttribute("class", `${className} ${className}-outline`);
+    outline.setAttribute("points", points.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "));
+    outline.setAttribute("fill", "none");
+    outline.setAttribute("stroke", "#000000");
+    outline.setAttribute("stroke-width", "9");
+    outline.setAttribute("stroke-linecap", "round");
+    outline.setAttribute("stroke-linejoin", "round");
+    (mapLayer || svg).appendChild(outline);
   }
 
   function addControlMarker(control, role) {
@@ -1241,7 +1509,7 @@
     const altMeters = altRouteLengthMeters();
     const rows = [];
     if (Number.isFinite(courseMeters) && courseMeters > 0) {
-      rows.push({color: "#b21f5b", label: "прямая", meters: courseMeters});
+      rows.push({color: "#FF1744", label: "прямая", meters: courseMeters});
     }
     if (Number.isFinite(trackMeters) && trackMeters > 0) {
       rows.push({color: "#1565c0", label: "трек", meters: trackMeters});

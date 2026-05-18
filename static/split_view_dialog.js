@@ -108,13 +108,19 @@
     marker.setAttribute("orient", "auto-start-reverse");
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
-    path.setAttribute("fill", "#b21f5b");
+    path.setAttribute("fill", "#FF1744");
+    path.setAttribute("stroke", "#000000");
+    path.setAttribute("stroke-width", "1.5");
+    path.setAttribute("stroke-linejoin", "round");
     marker.appendChild(path);
     defs.appendChild(marker);
     svg.appendChild(defs);
   }
 
   function addPolyline(points, className) {
+    if (className === "split-view-line") {
+      addPolylineOutline(points, className);
+    }
     const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
     polyline.setAttribute("points", points.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "));
     polyline.setAttribute("fill", "none");
@@ -123,6 +129,16 @@
     polyline.setAttribute("class", className);
     polyline.setAttribute("marker-end", "url(#split-view-arrow-head)");
     svg.appendChild(polyline);
+  }
+
+  function addPolylineOutline(points, className) {
+    const outline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    outline.setAttribute("points", points.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "));
+    outline.setAttribute("fill", "none");
+    outline.setAttribute("stroke-linecap", "round");
+    outline.setAttribute("stroke-linejoin", "round");
+    outline.setAttribute("class", `${className} ${className}-outline`);
+    svg.appendChild(outline);
   }
 
   function addControlMarker(control, role) {

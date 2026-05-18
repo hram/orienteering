@@ -130,10 +130,20 @@
     if (points.length < 2) {
       return;
     }
+    if (className === "course-line") {
+      addPolylineOutline(points, className);
+    }
     const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
     polyline.setAttribute("class", className);
     polyline.setAttribute("points", points.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "));
     svg.appendChild(polyline);
+  }
+
+  function addPolylineOutline(points, className) {
+    const outline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    outline.setAttribute("class", `${className} ${className}-outline`);
+    outline.setAttribute("points", points.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "));
+    svg.appendChild(outline);
   }
 
   function addControlMarker(control) {

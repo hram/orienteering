@@ -13,6 +13,8 @@
   const positionInput = document.querySelector("#player-position");
   const timeLabel = document.querySelector("#player-time");
   const paceValue = document.querySelector("#pace-value");
+  const paceChartPanel = document.querySelector(".pace-chart-panel");
+  const pacePanelToggle = document.querySelector("#pace-panel-toggle");
   const paceChart = document.querySelector("#pace-chart");
   const trimLeftButton = document.querySelector("#trim-left");
   const trimRightButton = document.querySelector("#trim-right");
@@ -161,6 +163,10 @@
     saveTrack();
   });
 
+  pacePanelToggle?.addEventListener("click", () => {
+    togglePacePanel();
+  });
+
   splitProblemsOnly?.addEventListener("change", () => {
     renderSplitsTable();
   });
@@ -254,6 +260,19 @@
     renderSplitsTable();
   }
 
+  function togglePacePanel() {
+    if (!paceChartPanel || !pacePanelToggle) {
+      return;
+    }
+    const collapsed = paceChartPanel.classList.toggle("collapsed");
+    pacePanelToggle.setAttribute("aria-expanded", String(!collapsed));
+    pacePanelToggle.textContent = collapsed ? "Развернуть" : "Свернуть";
+    if (!collapsed && paceChartInstance) {
+      paceChartInstance.resize();
+      paceChartInstance.update("none");
+    }
+  }
+
   function interpolateTrackPixel(seconds) {
     if (trackPoints.length === 1 || seconds <= 0) {
       return trackPoints[0].pixel;
@@ -309,10 +328,20 @@
   }
 
   function addPolyline(points, className) {
+    if (className === "course-line") {
+      addPolylineOutline(points, className);
+    }
     const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
     polyline.setAttribute("class", className);
     polyline.setAttribute("points", points.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "));
     svg.appendChild(polyline);
+  }
+
+  function addPolylineOutline(points, className) {
+    const outline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    outline.setAttribute("class", `${className} ${className}-outline`);
+    outline.setAttribute("points", points.map((point) => `${point.pixel_x},${point.pixel_y}`).join(" "));
+    svg.appendChild(outline);
   }
 
   function addControlMarker(control) {

@@ -1104,8 +1104,17 @@ textarea {
 
 .course-line {
   fill: none;
-  stroke: #b21f5b;
+  stroke: #FF1744;
   stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 10 8;
+}
+
+.course-line-outline {
+  fill: none;
+  stroke: #000000;
+  stroke-width: 7;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-dasharray: 10 8;
@@ -1199,6 +1208,24 @@ textarea {
   justify-content: flex-end;
   align-items: center;
   gap: 8px;
+}
+
+.pace-chart-panel.collapsed .pace-panel-body,
+.pace-chart-panel.collapsed #trim-left,
+.pace-chart-panel.collapsed #trim-right,
+.pace-chart-panel.collapsed #trim-undo,
+.pace-chart-panel.collapsed #save-track,
+.pace-chart-panel.collapsed #track-save-status {
+  display: none;
+}
+
+.pace-chart-panel.collapsed .pane-header {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.pace-panel-body {
+  display: block;
 }
 
 .pace-chart-frame {
@@ -1852,17 +1879,46 @@ textarea {
   padding: 7px 10px;
 }
 
+.split-export-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #66747c;
+  font-size: 12px;
+}
+
+.split-export-control select {
+  min-height: 30px;
+  padding: 4px 8px;
+}
+
+.split-export-status {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .split-course-line {
   fill: none;
-  stroke: #b21f5b;
+  stroke: #FF1744;
   stroke-width: 5;
   stroke-linecap: round;
   stroke-linejoin: round;
   marker-end: url("#split-arrow-head");
 }
 
+.split-course-line-outline {
+  stroke: #000000;
+  stroke-width: 9;
+  marker-end: none;
+}
+
 #split-arrow-head path {
-  fill: #b21f5b;
+  fill: #FF1744;
+  stroke: #000000;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
 }
 
 .split-track-line {
@@ -1885,11 +1941,24 @@ textarea {
 
 .split-view-line {
   fill: none;
-  stroke: #b21f5b;
+  stroke: #FF1744;
   stroke-width: 5;
   stroke-linecap: round;
   stroke-linejoin: round;
   marker-end: url("#split-view-arrow-head");
+}
+
+.split-view-line-outline {
+  stroke: #000000;
+  stroke-width: 9;
+  marker-end: none;
+}
+
+#split-view-arrow-head path {
+  fill: #FF1744;
+  stroke: #000000;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
 }
 
 .split-view-map {
