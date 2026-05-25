@@ -28,7 +28,7 @@ from portal.db import (
     update_import_draft_details,
     update_training_track_points,
 )
-from portal.infrastructure import config
+from portal.infrastructure import config, media
 from portal.routers.georef import ControlPointPayload
 from portal.services.gpx import parse_gpx_track_points
 from portal.services.georef import ControlPoint, fit_affine_transform, residuals_meters
@@ -526,17 +526,7 @@ async def _resolve_subject_user_id(
 
 def _draft_view_model(draft: dict) -> dict:
     payload = dict(draft)
-    payload["map_image_url"] = None
-    image_path = draft.get("map_image_path")
-    if image_path:
-        upload_root = Path(config.UPLOAD_DIR).expanduser().resolve()
-        resolved_image = Path(image_path).expanduser().resolve()
-        try:
-            relative = resolved_image.relative_to(upload_root)
-        except ValueError:
-            relative = None
-        if relative is not None:
-            payload["map_image_url"] = f"/uploads/{relative.as_posix()}"
+    payload["map_image_url"] = media.map_image_url(draft.get("map_image_path"))
     return payload
 
 
@@ -549,17 +539,7 @@ def _normalize_discipline(value: str) -> str:
 
 def _training_view_model(training: dict) -> dict:
     payload = dict(training)
-    payload["map_image_url"] = None
-    image_path = training.get("map_image_path")
-    if image_path:
-        upload_root = Path(config.UPLOAD_DIR).expanduser().resolve()
-        resolved_image = Path(image_path).expanduser().resolve()
-        try:
-            relative = resolved_image.relative_to(upload_root)
-        except ValueError:
-            relative = None
-        if relative is not None:
-            payload["map_image_url"] = f"/uploads/{relative.as_posix()}"
+    payload["map_image_url"] = media.map_image_url(training.get("map_image_path"))
     return payload
 
 

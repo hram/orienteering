@@ -24,7 +24,7 @@ from portal.db import (
     list_dashboard_split_error_reviews,
     normalize_db_path,
 )
-from portal.infrastructure import config
+from portal.infrastructure import config, media
 from portal.routers import ai, auth as auth_router, georef, imports, race_results, settings
 
 
@@ -668,12 +668,4 @@ def _format_minutes_seconds(seconds: int) -> str:
 
 
 def _map_image_url(image_path: str | None) -> str | None:
-    if not image_path:
-        return None
-    upload_root = Path(config.UPLOAD_DIR).expanduser().resolve()
-    resolved_image = Path(image_path).expanduser().resolve()
-    try:
-        relative = resolved_image.relative_to(upload_root)
-    except ValueError:
-        return None
-    return f"/uploads/{relative.as_posix()}"
+    return media.map_image_url(image_path)
