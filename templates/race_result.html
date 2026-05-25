@@ -405,7 +405,9 @@
       {% if not training.track_points %}
         {% include "partials/split_view_dialog.html" %}
       {% endif %}
-      <img id="race-analysis-map-image" src="{{ training.map_image_url }}" alt="" hidden>
+      {% if training.map_image_url %}
+        <img id="race-analysis-map-image" src="{{ training.map_image_url }}" alt="" hidden>
+      {% endif %}
       <script src="/static/splits.js"></script>
       <script src="/static/split_analysis_dialog.js"></script>
       {% if not training.track_points %}

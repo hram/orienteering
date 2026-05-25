@@ -25,7 +25,7 @@ from portal.db import (
     normalize_race_date,
     save_race_result,
 )
-from portal.infrastructure import config
+from portal.infrastructure import config, media
 from portal.services.race_protocol import ParsedRaceProtocol, fetch_race_protocol, parse_race_protocol_html
 
 
@@ -1557,15 +1557,5 @@ def _reachability_chart_view(result: dict, self_participant: dict | None) -> dic
 
 def _training_view_model(training: dict) -> dict:
     payload = dict(training)
-    payload["map_image_url"] = None
-    image_path = training.get("map_image_path")
-    if image_path:
-        upload_root = Path(config.UPLOAD_DIR).expanduser().resolve()
-        resolved_image = Path(image_path).expanduser().resolve()
-        try:
-            relative = resolved_image.relative_to(upload_root)
-        except ValueError:
-            relative = None
-        if relative is not None:
-            payload["map_image_url"] = f"/uploads/{relative.as_posix()}"
+    payload["map_image_url"] = media.map_image_url(training.get("map_image_path"))
     return payload

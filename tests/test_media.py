@@ -33,5 +33,13 @@ def test_foreign_absolute_path_with_uploads_segment(prod_upload_dir):
     assert media.map_image_url(path) == "/uploads/imports/abc/map.png"
 
 
+def test_race_result_training_view_model_uses_shared_media_url(prod_upload_dir):
+    from portal.routers.race_results import _training_view_model
+
+    training = {"map_image_path": "data/uploads/imports/abc/map.jpg"}
+
+    assert _training_view_model(training)["map_image_url"] == "/uploads/imports/abc/map.jpg"
+
+
 def test_path_without_uploads_segment_returns_none(prod_upload_dir):
     assert media.map_image_url("/some/other/place/map.jpg") is None

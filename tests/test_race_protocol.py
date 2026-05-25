@@ -1105,6 +1105,59 @@ def test_race_protocol_import_flow(monkeypatch) -> None:
     assert f"/trainings/{training_id}/race-result/import" not in trainings_after_save.text
 
 
+def test_race_result_page_without_map_does_not_render_none_image_src(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    class DummyConn:
+        async def close(self) -> None:
+            pass
+
+    parsed = parse_race_protocol_html(SAMPLE_PROTOCOL)
+    group = parsed.groups[0]
+    result = {
+        "race_result_id": "race-result-1",
+        "training_id": "training-1",
+        "source_url": "https://example.test/splits.html",
+        "event_name": parsed.event_name,
+        "event_meta": parsed.event_meta,
+        "group_name": group["name"],
+        "group_subtitle": group.get("subtitle") or "",
+        "controls": json.loads(json.dumps(group["controls"])),
+        "participants": json.loads(json.dumps(group["participants"])),
+        "self_row_index": 0,
+        "kind": parsed.kind,
+    }
+    training = {
+        "training_id": "training-1",
+        "training_type": "race",
+        "map_image_path": None,
+        "georef_transform": None,
+        "course_controls": [],
+        "track_points": [],
+    }
+
+    async def fake_connect_db(_db_path: str) -> DummyConn:
+        return DummyConn()
+
+    async def fake_get_race_result(_conn: DummyConn, _race_result_id: str) -> dict:
+        return json.loads(json.dumps(result))
+
+    async def fake_get_training_player(_conn: DummyConn, _training_id: str) -> dict:
+        return training
+
+    monkeypatch.setattr(race_results, "connect_db", fake_connect_db)
+    monkeypatch.setattr(race_results, "get_race_result", fake_get_race_result)
+    monkeypatch.setattr(race_results, "get_training_player", fake_get_training_player)
+
+    with TestClient(app) as client:
+        detail = client.get("/race-results/race-result-1")
+
+    assert detail.status_code == 200
+    assert 'data-map-image-url=""' in detail.text
+    assert "race-analysis-map-image" not in detail.text
+    assert 'src="None"' not in detail.text
+
+
 def test_orgeo_import_flow(monkeypatch) -> None:
     from portal.routers import race_results
 
