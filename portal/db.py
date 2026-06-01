@@ -1185,6 +1185,28 @@ async def set_import_draft_track(
     return await get_import_draft(conn, draft_id)
 
 
+async def update_import_draft_track_points(
+    conn: aiosqlite.Connection,
+    draft_id: str,
+    *,
+    track_points: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    draft = await get_import_draft(conn, draft_id)
+    if draft is None:
+        return None
+    await conn.execute(
+        """
+        UPDATE training_import_drafts
+        SET track_points = ?,
+            updated_at = ?
+        WHERE draft_id = ?
+        """,
+        (serialize_json(track_points), utc_now_iso(), draft_id),
+    )
+    await conn.commit()
+    return await get_import_draft(conn, draft_id)
+
+
 async def clear_import_draft_track(
     conn: aiosqlite.Connection,
     draft_id: str,

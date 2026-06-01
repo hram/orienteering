@@ -26,6 +26,7 @@ from portal.db import (
     set_import_draft_map_image,
     set_import_draft_track,
     update_import_draft_details,
+    update_import_draft_track_points,
     update_training_track_points,
 )
 from portal.infrastructure import config, media
@@ -68,6 +69,10 @@ class TrainingTrackPointPayload(BaseModel):
     lon: float = Field(..., ge=-180, le=180)
     ele: float | None = None
     time: str | None = None
+    split_control_index: int | None = Field(default=None, ge=1)
+    split_control_label: str | None = None
+    split_control_kind: str | None = None
+    split_control_order: int | None = Field(default=None, ge=0)
 
 
 class SaveTrainingTrackPayload(BaseModel):
@@ -424,6 +429,23 @@ async def upload_import_track_gpx(draft_id: str, file: UploadFile = File(...)) -
     }
 
 
+@router.post("/api/imports/{draft_id}/track-points")
+async def save_import_track_points(draft_id: str, payload: SaveTrainingTrackPayload) -> dict:
+    track_points = [_model_to_dict(point) for point in payload.track_points]
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        updated = await update_import_draft_track_points(
+            conn,
+            draft_id,
+            track_points=track_points,
+        )
+    finally:
+        await conn.close()
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Import draft not found")
+    return {"draft": _draft_view_model(updated), "point_count": len(track_points)}
+
+
 @router.post("/trainings/imports/{draft_id}/track/delete")
 async def delete_import_track(draft_id: str) -> RedirectResponse:
     draft = await _get_draft_or_404(draft_id)
@@ -710,5 +732,5 @@ def _compact_gap(seconds: int | None) -> str:
 
 def _model_to_dict(model: BaseModel) -> dict:
     if hasattr(model, "model_dump"):
-        return model.model_dump()
-    return model.dict()
+        return model.model_dump(exclude_none=True)
+    return model.dict(exclude_none=True)

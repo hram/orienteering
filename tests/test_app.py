@@ -383,6 +383,48 @@ def test_import_track_can_be_deleted_from_draft() -> None:
     assert draft_api.json()["draft"]["track_gpx_filename"] is None
 
 
+def test_import_track_points_can_save_split_markers_to_draft() -> None:
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/trainings/imports",
+            data={"title": "Split markers", "date": "2026-04-29", "discipline": "run", "subject_user_id": fetch_user_id("polina")},
+            follow_redirects=False,
+        )
+        draft_id = create_response.headers["location"].split("/")[3]
+        save_response = client.post(
+            f"/api/imports/{draft_id}/track-points",
+            json={
+                "track_points": [
+                    {
+                        "lat": 60.0,
+                        "lon": 30.0,
+                        "time": "2026-04-29T10:00:00Z",
+                        "split_control_index": 1,
+                        "split_control_label": "С",
+                        "split_control_kind": "start",
+                        "split_control_order": 0,
+                    },
+                    {
+                        "lat": 60.001,
+                        "lon": 30.001,
+                        "time": "2026-04-29T10:00:05Z",
+                        "split_control_index": 3,
+                        "split_control_label": "Ф",
+                        "split_control_kind": "finish",
+                        "split_control_order": 1,
+                    },
+                ]
+            },
+        )
+        draft_response = client.get(f"/api/imports/{draft_id}")
+
+    assert save_response.status_code == 200
+    assert save_response.json()["point_count"] == 2
+    track_points = draft_response.json()["draft"]["track_points"]
+    assert track_points[0]["split_control_label"] == "С"
+    assert track_points[1]["split_control_order"] == 1
+
+
 def test_finish_training_import_redirects_to_trainings() -> None:
     with TestClient(app) as client:
         create_response = client.post(

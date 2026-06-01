@@ -17,7 +17,7 @@
     const splitControls = courseControls.filter((control) => control.kind !== "start-point");
     const startControl = splitControls[0];
     const startMatch = startControl
-      ? findClosestTrackPoint(trackPoints, startControl, 0, startSearchEndIndex(trackPoints))
+      ? findSplitTrackPoint(trackPoints, startControl, 0, startSearchEndIndex(trackPoints))
       : null;
     if (!startMatch) {
       return [];
@@ -31,7 +31,7 @@
     let previousMatchIndex = startMatch.index;
 
     for (const control of splitControls.slice(1)) {
-      const match = findClosestTrackPoint(trackPoints, control, nextSearchIndex);
+      const match = findSplitTrackPoint(trackPoints, control, nextSearchIndex);
       if (!match) {
         break;
       }
@@ -121,6 +121,38 @@
       }
     }
     return best;
+  }
+
+  function findSplitTrackPoint(trackPoints, control, startIndex, endIndex = trackPoints.length) {
+    const manual = findManualSplitTrackPoint(trackPoints, control, startIndex, endIndex);
+    return manual || findClosestTrackPoint(trackPoints, control, startIndex, endIndex);
+  }
+
+  function findManualSplitTrackPoint(trackPoints, control, startIndex, endIndex) {
+    for (let index = startIndex; index < endIndex; index += 1) {
+      const point = trackPoints[index];
+      if (!isManualSplitPoint(point, control)) {
+        continue;
+      }
+      return {
+        index,
+        point,
+        distanceMeters: haversineMeters(point, control),
+        seconds: point.seconds ?? parsePointSeconds(point, index),
+      };
+    }
+    return null;
+  }
+
+  function isManualSplitPoint(point, control) {
+    if (Number(point.split_control_index) === Number(control.index)) {
+      return true;
+    }
+    return Boolean(
+      point.split_control_label
+        && point.split_control_label === control.label
+        && point.split_control_kind === control.kind
+    );
   }
 
   function courseStageDistanceMeters(courseControls, previousControl, currentControl) {

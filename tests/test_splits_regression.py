@@ -67,6 +67,41 @@ console.log(JSON.stringify({
     assert actual["rogaineKinds"] == ["start", "control", "control", "finish"]
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for JS split tests")
+def test_calculate_splits_prefers_manual_track_markers() -> None:
+    script = """
+const splits = require("./static/splits.js");
+const controls = splits.normalizeCourseControls([
+  {pixel_x: 0, pixel_y: 0, lat: 60.0, lon: 30.0},
+  {pixel_x: 10, pixel_y: 0, lat: 60.0, lon: 30.001},
+  {pixel_x: 20, pixel_y: 0, lat: 60.0, lon: 30.002},
+]);
+const track = [
+  {lat: 60.0, lon: 30.0, seconds: 0, split_control_index: 1, split_control_label: "С", split_control_kind: "start", split_control_order: 0},
+  {lat: 60.0, lon: 30.002, seconds: 10},
+  {lat: 60.0, lon: 30.00195, seconds: 20, split_control_index: 3, split_control_label: "Ф", split_control_kind: "finish", split_control_order: 1},
+  {lat: 60.0, lon: 30.002, seconds: 30},
+];
+const rows = splits.calculateSplits(controls, track);
+console.log(JSON.stringify({
+  count: rows.length,
+  toTrackIndex: rows[0]?.toTrackIndex,
+  splitSeconds: rows[0]?.splitSeconds,
+}));
+"""
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT_DIR,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    actual = json.loads(result.stdout)
+
+    assert actual == {"count": 1, "toTrackIndex": 2, "splitSeconds": 20}
+
+
 def calculate_fixture_splits(fixture_name: str) -> tuple[dict, dict]:
     fixture_path = ROOT_DIR / "tests" / "fixtures" / fixture_name
     script = """

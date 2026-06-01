@@ -924,6 +924,11 @@
     if (point.time) {
       payload.time = point.time;
     }
+    for (const key of ["split_control_index", "split_control_label", "split_control_kind", "split_control_order"]) {
+      if (point[key] !== null && typeof point[key] !== "undefined") {
+        payload[key] = point[key];
+      }
+    }
     return payload;
   }
 

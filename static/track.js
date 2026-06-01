@@ -6,19 +6,25 @@
 
   const draftId = workspace.dataset.draftId;
   const trainingType = workspace.dataset.trainingType || "";
-  const isRogaine = trainingType === "rogaine";
   const uploadForm = document.querySelector("#track-upload-form");
   const status = document.querySelector("#track-status");
   const image = document.querySelector("#track-map-image");
   const svg = document.querySelector("#track-image-svg");
   const viewport = document.querySelector("#track-image-viewport");
   const content = document.querySelector("#track-image-content");
+  const splitsStatus = document.querySelector("#track-splits-status");
 
   const transform = parseJson(workspace.dataset.transform, null);
-  const courseControls = normalizeCourseControls(parseJson(workspace.dataset.courseControls, []));
-  let trackPoints = parseJson(workspace.dataset.trackPoints, []);
+  const splitsEngine = window.OrienteeringSplits || createFallbackSplitsEngine();
+  const courseControls = splitsEngine.normalizeCourseControls(
+    parseJson(workspace.dataset.courseControls, []),
+    {trainingType}
+  );
+  let trackPoints = normalizeTrackPoints(parseJson(workspace.dataset.trackPoints, []));
   let view = {scale: 1, translateX: 0, translateY: 0};
   let drag = null;
+  let splitDrag = null;
+  let persistTimer = null;
 
   uploadForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -36,7 +42,9 @@
     }
 
     const payload = await response.json();
-    trackPoints = payload.track_points;
+    trackPoints = normalizeTrackPoints(payload.track_points);
+    autoAnnotateSplitMarkers();
+    await saveDraftTrackPointsNow();
     drawAll();
   });
 
@@ -91,6 +99,15 @@
   viewport?.addEventListener("pointerup", finishDrag);
   viewport?.addEventListener("pointercancel", finishDrag);
 
+  svg?.addEventListener("pointermove", moveSplitMarker);
+  svg?.addEventListener("pointerup", finishSplitMarkerDrag);
+  svg?.addEventListener("pointercancel", finishSplitMarkerDrag);
+
+  if (trackPoints.length && !hasSplitMarkers()) {
+    autoAnnotateSplitMarkers();
+    saveDraftTrackPointsNow();
+  }
+
   drawAll();
 
   function drawAll() {
@@ -100,6 +117,7 @@
         ? `Точек трека: ${trackPoints.length}.`
         : "Загрузите GPX.";
     }
+    updateSplitsStatus();
   }
 
   function drawImageTrack() {
@@ -122,7 +140,8 @@
     });
 
     if (trackPoints.length) {
-      addPolyline(trackPoints.map(geoToPixel), "track-line");
+      addPolyline(trackPoints.map((point) => point.pixel), "track-line");
+      addSplitMarkers();
     }
   }
 
@@ -159,6 +178,354 @@
     label.textContent = control.label;
     group.append(circle, label);
     svg.appendChild(group);
+  }
+
+  function addSplitMarkers() {
+    getSplitMarkers().forEach((marker) => {
+      const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      group.setAttribute("class", "split-cut-marker");
+      group.setAttribute("transform", `translate(${marker.point.pixel.pixel_x} ${marker.point.pixel.pixel_y})`);
+      group.dataset.trackIndex = String(marker.trackIndex);
+      group.dataset.controlIndex = String(marker.control.index);
+      group.dataset.controlOrder = String(marker.order);
+
+      const halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      halo.setAttribute("class", "split-cut-marker-halo");
+      halo.setAttribute("r", "12");
+      const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      dot.setAttribute("class", "split-cut-marker-dot");
+      dot.setAttribute("r", "6");
+      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      label.setAttribute("y", "-16");
+      label.textContent = marker.control.label;
+
+      group.append(halo, dot, label);
+      group.addEventListener("pointerdown", startSplitMarkerDrag);
+      svg.appendChild(group);
+    });
+  }
+
+  function startSplitMarkerDrag(event) {
+    if (!image || !svg) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const markerNode = event.currentTarget;
+    const order = Number(markerNode.dataset.controlOrder);
+    const marker = getSplitMarkers().find((item) => item.order === order);
+    if (!marker) {
+      return;
+    }
+    svg.setPointerCapture(event.pointerId);
+    splitDrag = {
+      pointerId: event.pointerId,
+      order,
+      controlIndex: marker.control.index,
+      trackIndex: marker.trackIndex,
+    };
+    svg.classList.add("dragging-split-marker");
+  }
+
+  function moveSplitMarker(event) {
+    if (!splitDrag || splitDrag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    const limits = splitMarkerLimits(splitDrag.order);
+    const pointer = clientPointToViewportPoint(event.clientX, event.clientY);
+    const pixel = viewportPointToImagePixel(pointer.x, pointer.y);
+    const nextIndex = nearestTrackIndexToPixel(pixel, limits.min, limits.max);
+    if (nextIndex === null || nextIndex === splitDrag.trackIndex) {
+      return;
+    }
+    moveSplitMarkerAnnotation(splitDrag.trackIndex, nextIndex, splitDrag.controlIndex);
+    splitDrag.trackIndex = nextIndex;
+    drawAll();
+  }
+
+  function finishSplitMarkerDrag(event) {
+    if (!splitDrag || splitDrag.pointerId !== event.pointerId) {
+      return;
+    }
+    svg?.releasePointerCapture(event.pointerId);
+    svg?.classList.remove("dragging-split-marker");
+    splitDrag = null;
+    persistDraftTrackPoints(250);
+  }
+
+  function autoAnnotateSplitMarkers() {
+    clearSplitMarkerAnnotations();
+    const rows = splitsEngine.calculateSplits(courseControls, trackPoints);
+    if (!rows.length) {
+      return;
+    }
+    const splitControls = courseControls.filter((control) => control.kind !== "start-point");
+    const firstRow = rows[0];
+    annotateSplitMarker(firstRow.fromTrackIndex, firstRow.fromControl, splitControls.indexOf(firstRow.fromControl));
+    rows.forEach((row) => {
+      annotateSplitMarker(row.toTrackIndex, row.toControl, splitControls.indexOf(row.toControl));
+    });
+  }
+
+  function annotateSplitMarker(trackIndex, control, order) {
+    if (!trackPoints[trackIndex] || !control || order < 0) {
+      return;
+    }
+    trackPoints[trackIndex].split_control_index = control.index;
+    trackPoints[trackIndex].split_control_label = control.label;
+    trackPoints[trackIndex].split_control_kind = control.kind;
+    trackPoints[trackIndex].split_control_order = order;
+  }
+
+  function clearSplitMarkerAnnotations() {
+    trackPoints.forEach((point) => {
+      delete point.split_control_index;
+      delete point.split_control_label;
+      delete point.split_control_kind;
+      delete point.split_control_order;
+    });
+  }
+
+  function moveSplitMarkerAnnotation(fromIndex, toIndex, controlIndex) {
+    const source = trackPoints[fromIndex];
+    const target = trackPoints[toIndex];
+    if (!source || !target) {
+      return;
+    }
+    target.split_control_index = source.split_control_index || controlIndex;
+    target.split_control_label = source.split_control_label;
+    target.split_control_kind = source.split_control_kind;
+    target.split_control_order = source.split_control_order;
+    delete source.split_control_index;
+    delete source.split_control_label;
+    delete source.split_control_kind;
+    delete source.split_control_order;
+  }
+
+  function getSplitMarkers() {
+    const splitControls = courseControls.filter((control) => control.kind !== "start-point");
+    return trackPoints
+      .map((point, trackIndex) => {
+        const order = Number(point.split_control_order);
+        const control = splitControls[order] || splitControls.find((item) => item.index === Number(point.split_control_index));
+        if (!control || !Number.isFinite(order)) {
+          return null;
+        }
+        return {point, trackIndex, control, order};
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.order - b.order);
+  }
+
+  function hasSplitMarkers() {
+    return trackPoints.some((point) => Number.isFinite(Number(point.split_control_order)));
+  }
+
+  function splitMarkerLimits(order) {
+    const markers = getSplitMarkers();
+    const previous = markers.filter((marker) => marker.order < order).at(-1);
+    const next = markers.find((marker) => marker.order > order);
+    return {
+      min: previous ? previous.trackIndex + 1 : 0,
+      max: next ? next.trackIndex - 1 : trackPoints.length - 1,
+    };
+  }
+
+  function nearestTrackIndexToPixel(pixel, minIndex, maxIndex) {
+    let best = null;
+    for (let index = minIndex; index <= maxIndex; index += 1) {
+      const point = trackPoints[index];
+      if (!point?.pixel) {
+        continue;
+      }
+      const dx = point.pixel.pixel_x - pixel.pixel_x;
+      const dy = point.pixel.pixel_y - pixel.pixel_y;
+      const distance = dx * dx + dy * dy;
+      if (!best || distance < best.distance) {
+        best = {index, distance};
+      }
+    }
+    return best ? best.index : null;
+  }
+
+  function updateSplitsStatus() {
+    if (!splitsStatus) {
+      return;
+    }
+    if (!trackPoints.length) {
+      splitsStatus.textContent = "После загрузки GPX здесь появятся точки нарезки по КП.";
+      return;
+    }
+    const markers = getSplitMarkers();
+    const rows = splitsEngine.calculateSplits(courseControls, trackPoints);
+    if (!markers.length || !rows.length) {
+      splitsStatus.textContent = "Не удалось автоматически нарезать трек: проверьте КП и GPX.";
+      return;
+    }
+    splitsStatus.textContent = `Нарезка: ${rows.length} отрезков, ${markers.length} точек на треке. Перетащите точку вдоль синего трека, чтобы поправить КП.`;
+  }
+
+  async function persistDraftTrackPoints(delayMs) {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+    }
+    persistTimer = setTimeout(async () => {
+      persistTimer = null;
+      await saveDraftTrackPointsNow();
+    }, delayMs);
+  }
+
+  async function saveDraftTrackPointsNow() {
+    await fetch(`/api/imports/${draftId}/track-points`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({track_points: trackPoints.map(serializedTrackPoint)}),
+    });
+  }
+
+  function normalizeTrackPoints(points) {
+    return points.map((point, index) => ({
+      ...point,
+      pixel: transform ? geoToPixel(point) : {pixel_x: 0, pixel_y: 0},
+      seconds: splitsEngine.parsePointSeconds(point, index),
+    }));
+  }
+
+  function serializedTrackPoint(point) {
+    const payload = {
+      lat: point.lat,
+      lon: point.lon,
+    };
+    if (typeof point.ele === "number") {
+      payload.ele = point.ele;
+    }
+    if (point.time) {
+      payload.time = point.time;
+    }
+    for (const key of ["split_control_index", "split_control_label", "split_control_kind", "split_control_order"]) {
+      if (point[key] !== null && typeof point[key] !== "undefined") {
+        payload[key] = point[key];
+      }
+    }
+    return payload;
+  }
+
+  function createFallbackSplitsEngine() {
+    return {
+      normalizeCourseControls(controls, options = {}) {
+        const rogaine = options.isRogaine === true || options.trainingType === "rogaine";
+        return controls.map((control, index) => ({
+          ...control,
+          index: index + 1,
+          label: fallbackCourseControlLabel(index, controls.length, rogaine),
+          kind: fallbackCourseControlKind(index, controls.length, rogaine),
+        }));
+      },
+      calculateSplits(controls, points) {
+        const splitControls = controls.filter((control) => control.kind !== "start-point");
+        if (splitControls.length < 2 || points.length < 2) {
+          return [];
+        }
+        const rows = [];
+        let previousControl = splitControls[0];
+        let previousMatch = fallbackFindClosestTrackPoint(points, previousControl, 0, fallbackStartSearchEndIndex(points));
+        if (!previousMatch) {
+          return [];
+        }
+        const startSeconds = previousMatch.seconds;
+        let previousAbsoluteSeconds = 0;
+        for (const control of splitControls.slice(1)) {
+          const match = fallbackFindClosestTrackPoint(points, control, previousMatch.index + 1);
+          if (!match) {
+            break;
+          }
+          const absoluteSeconds = Math.max(match.seconds - startSeconds, 0);
+          rows.push({
+            label: control.label || String(control.index),
+            absoluteSeconds,
+            splitSeconds: Math.max(absoluteSeconds - previousAbsoluteSeconds, 0),
+            fromControl: previousControl,
+            toControl: control,
+            fromTrackIndex: previousMatch.index,
+            toTrackIndex: match.index,
+          });
+          previousControl = control;
+          previousMatch = match;
+          previousAbsoluteSeconds = absoluteSeconds;
+        }
+        return rows;
+      },
+      parsePointSeconds(point, index) {
+        return fallbackParsePointSeconds(point, index);
+      },
+    };
+  }
+
+  function fallbackCourseControlLabel(index, total, rogaine) {
+    if (index === 0) {
+      return "С";
+    }
+    if (!rogaine && total > 2 && index === 1) {
+      return "К";
+    }
+    if (total > 1 && index === total - 1) {
+      return "Ф";
+    }
+    return String(rogaine ? index : index - 1);
+  }
+
+  function fallbackCourseControlKind(index, total, rogaine) {
+    if (index === 0) {
+      return "start";
+    }
+    if (!rogaine && total > 2 && index === 1) {
+      return "start-point";
+    }
+    if (total > 1 && index === total - 1) {
+      return "finish";
+    }
+    return "control";
+  }
+
+  function fallbackFindClosestTrackPoint(points, control, startIndex, endIndex = points.length) {
+    let best = null;
+    for (let index = startIndex; index < endIndex; index += 1) {
+      const point = points[index];
+      const dx = point.lat - control.lat;
+      const dy = point.lon - control.lon;
+      const distance = dx * dx + dy * dy;
+      if (!best || distance < best.distance) {
+        best = {
+          index,
+          distance,
+          seconds: point.seconds ?? fallbackParsePointSeconds(point, index),
+        };
+      }
+    }
+    return best;
+  }
+
+  function fallbackStartSearchEndIndex(points) {
+    const firstSeconds = points[0]?.seconds ?? fallbackParsePointSeconds(points[0] || {}, 0);
+    const fallbackEndIndex = Math.max(1, Math.ceil(points.length * 0.1));
+    for (let index = 1; index < points.length; index += 1) {
+      const seconds = points[index].seconds ?? fallbackParsePointSeconds(points[index], index);
+      if (seconds - firstSeconds > 300) {
+        return Math.max(1, Math.min(index, fallbackEndIndex));
+      }
+    }
+    return fallbackEndIndex;
+  }
+
+  function fallbackParsePointSeconds(point, index) {
+    if (point?.time) {
+      const timestamp = Date.parse(point.time);
+      if (!Number.isNaN(timestamp)) {
+        return timestamp / 1000;
+      }
+    }
+    return index;
   }
 
   function geoToPixel(point) {
@@ -229,41 +596,6 @@
     } catch (_error) {
       return fallback;
     }
-  }
-
-  function normalizeCourseControls(controls) {
-    return controls.map((control, index) => ({
-      ...control,
-      index: index + 1,
-      label: courseControlLabel(index, controls.length),
-      kind: courseControlKind(index, controls.length),
-    }));
-  }
-
-  function courseControlLabel(index, total) {
-    if (index === 0) {
-      return "С";
-    }
-    if (!isRogaine && total > 2 && index === 1) {
-      return "К";
-    }
-    if (total > 1 && index === total - 1) {
-      return "Ф";
-    }
-    return String(isRogaine ? index : index - 1);
-  }
-
-  function courseControlKind(index, total) {
-    if (index === 0) {
-      return "start";
-    }
-    if (!isRogaine && total > 2 && index === 1) {
-      return "start-point";
-    }
-    if (total > 1 && index === total - 1) {
-      return "finish";
-    }
-    return "control";
   }
 
   function clamp(value, min, max) {
