@@ -425,14 +425,14 @@ def _parse_controls(headers: list[str]) -> list[dict[str, Any]]:
         if not header.startswith("#"):
             continue
         text = _clean(header)
-        match = re.search(r"#(\d+|F)\s*\(([^)]+)\)(?:\s*(\d+)\s*m)?", text)
+        match = re.search(r"#(\d+|F)\s*(?:\(([^)]+)\))?(?:\s*(\d+)\s*m)?", text)
         if not match:
             continue
         controls.append(
             {
                 "column_index": index,
                 "label": match.group(1),
-                "code": match.group(2),
+                "code": match.group(2) or "",
                 "distance_meters": int(match.group(3)) if match.group(3) else None,
             }
         )
@@ -496,11 +496,13 @@ def _parse_legacy_participant(
     _normalize_first_split(splits)
     meta = _course_column_meta(headers)
 
+    bib = value(meta["bib"])
     return {
         "row_index": row_index,
         "order": _to_int(value(meta["order"])),
         "name": value(meta["name"]),
-        "bib": value(meta["bib"]),
+        "bib": bib,
+        "lap": _lap_from_bib(bib),
         "result": value(meta["result"]),
         "place": value(meta["place"]),
         "gap": value(meta["gap"]),
@@ -522,11 +524,13 @@ def _parse_participant(
     _normalize_first_split(splits)
     meta = _course_column_meta(headers)
 
+    bib = _clean(value(meta["bib"]))
     return {
         "row_index": row_index,
         "order": _to_int(_clean(value(meta["order"]))),
         "name": _clean(value(meta["name"])),
-        "bib": _clean(value(meta["bib"])),
+        "bib": bib,
+        "lap": _lap_from_bib(bib),
         "result": _clean(value(meta["result"])),
         "place": _clean(value(meta["place"])),
         "gap": _clean(value(meta["gap"])),
@@ -604,7 +608,7 @@ def _parse_split_cell(control: dict[str, Any], raw_value: str) -> dict[str, Any]
     split = _parse_time_rank(parts[1] if len(parts) > 1 else "")
     return {
         "label": control["label"],
-        "code": control["code"],
+        "code": control["code"] or (cumulative or {}).get("code", ""),
         "distance_meters": control["distance_meters"],
         "cumulative": cumulative,
         "split": split,
@@ -643,16 +647,19 @@ def _parse_time_rank(value: str) -> dict[str, Any] | None:
     text = _clean(value)
     if not text:
         return None
-    match = re.match(r"([^()]+?)(?:\((\d+)\))?$", text)
+    match = re.match(r"(?P<time>[0-9:]+)\s*(?:\[(?P<code>[^\]]+)\])?\s*(?:\((?P<rank>\d+)\))?$", text)
     if not match:
         return {"raw": text, "seconds": None, "rank": None}
-    time_text = match.group(1).strip()
-    return {
+    time_text = match.group("time").strip()
+    parsed = {
         "raw": text,
         "time": time_text,
         "seconds": _time_to_seconds(time_text),
-        "rank": int(match.group(2)) if match.group(2) else None,
+        "rank": int(match.group("rank")) if match.group("rank") else None,
     }
+    if match.group("code"):
+        parsed["code"] = match.group("code").strip()
+    return parsed
 
 
 def _parse_time_code(value: str) -> dict[str, Any] | None:
@@ -709,6 +716,11 @@ def _clean(value: str) -> str:
 
 def _to_int(value: str) -> int | None:
     return int(value) if value.isdigit() else None
+
+
+def _lap_from_bib(value: str) -> str:
+    match = re.search(r"\.(\d+)\s*$", value.strip())
+    return match.group(1) if match else ""
 
 
 def _extract_tag_text(content: str, tag: str) -> str:

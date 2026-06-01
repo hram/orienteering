@@ -226,6 +226,14 @@
               </label>
             </div>
           {% endif %}
+          {% if result.is_relay_lap_scoped %}
+            <div class="race-summary-toggle">
+              <label class="race-problem-toggle">
+                <input type="checkbox" id="race-lap-toggle" checked>
+                <span>Только мой забег{% if result.self_lap %} · этап {{ result.self_lap }}{% endif %}</span>
+              </label>
+            </div>
+          {% endif %}
         </div>
       </section>
 
@@ -244,17 +252,17 @@
             </thead>
             <tbody>
               {% if result.virtual_leader %}
-                <tr class="race-virtual-leader-row">
+                <tr class="race-virtual-leader-row" id="race-virtual-leader-row">
                   <td>{{ result.virtual_leader.display_place or result.virtual_leader.place }}</td>
                   <td class="race-participant-name">
                     <span>{{ result.virtual_leader.name }}</span>
                   </td>
-                  <td>{{ result.virtual_leader.display_result }}</td>
+                  <td id="race-virtual-leader-result">{{ result.virtual_leader.display_result }}</td>
                   {% for split in result.virtual_leader.splits %}
-                    <td>
+                    <td data-virtual-split-index="{{ loop.index0 }}">
                       {% if split.split %}
                         <div class="problem-cell-row">
-                          <span>{{ split.split.short_time }}</span>
+                          <span data-virtual-split-time>{{ split.split.short_time }}</span>
                           {% if split.split.pace %}<small class="problem-cell-pace">{{ split.split.pace }}</small>{% endif %}
                         </div>
                       {% endif %}
@@ -263,7 +271,10 @@
                 </tr>
               {% endif %}
               {% for participant in result.participants %}
-                <tr class="{% if participant.row_index == result.self_row_index %}race-self-row{% endif %}">
+                <tr
+                  class="{% if participant.row_index == result.self_row_index %}race-self-row{% endif %}"
+                  {% if result.is_relay_lap_scoped and not participant.is_same_lap_as_self %}data-other-lap="true" hidden{% endif %}
+                >
                   <td>{{ participant.display_place or participant.place }}</td>
                   <td class="race-participant-name">
                     {% set name_parts = participant.name.split(" ", 1) %}
@@ -279,7 +290,10 @@
                     {% endif %}
                   </td>
                   {% for split in participant.splits %}
-                    <td class="{% if split.split and split.split.rank == 1 %}race-best-split-cell{% endif %}">
+                    <td
+                      data-race-split-index="{{ loop.index0 }}"
+                      {% if split.split and split.split.seconds is not none %}data-race-split-seconds="{{ split.split.seconds }}"{% endif %}
+                    >
                       {% if split.cumulative %}<span>{{ split.cumulative.time }}{% if split.cumulative.rank %} ({{ split.cumulative.rank }}){% endif %}</span>{% endif %}
                       {% if split.split %}<small>{{ split.split.time }}{% if split.split.rank %} ({{ split.split.rank }}){% endif %}</small>{% endif %}
                       {% if participant.row_index == result.self_row_index and split.leader_gap_text %}
@@ -390,14 +404,93 @@
         const toggle = document.querySelector("#race-problem-toggle");
         const fullPanel = document.querySelector(".race-table-panel");
         const problemPanel = document.querySelector("#race-problem-panel");
-        if (!toggle || !fullPanel || !problemPanel) {
-          return;
+        if (toggle && fullPanel && problemPanel) {
+          toggle.addEventListener("change", () => {
+            const showProblem = toggle.checked;
+            fullPanel.hidden = showProblem;
+            problemPanel.hidden = !showProblem;
+          });
         }
-        toggle.addEventListener("change", () => {
-          const showProblem = toggle.checked;
-          fullPanel.hidden = showProblem;
-          problemPanel.hidden = !showProblem;
-        });
+
+        const lapToggle = document.querySelector("#race-lap-toggle");
+        const otherLapRows = Array.from(document.querySelectorAll("[data-other-lap='true']"));
+        const virtualLeaderResult = document.querySelector("#race-virtual-leader-result");
+        const splitCells = Array.from(document.querySelectorAll("[data-race-split-index][data-race-split-seconds]"));
+
+        const formatSeconds = (seconds) => {
+          const total = Math.max(Math.round(seconds), 0);
+          const hours = Math.floor(total / 3600);
+          const minutes = Math.floor((total % 3600) / 60);
+          const rest = total % 60;
+          if (hours > 0) {
+            return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+          }
+          return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+        };
+
+        const visibleAnalysisRows = () => {
+          return Array.from(document.querySelectorAll(".race-table-panel tbody tr:not(.race-virtual-leader-row)"))
+            .filter((row) => !row.hidden);
+        };
+
+        const updateAnalysisMode = () => {
+          if (lapToggle && otherLapRows.length) {
+            otherLapRows.forEach((row) => {
+              row.hidden = lapToggle.checked;
+            });
+          }
+
+          const visibleRows = visibleAnalysisRows();
+          const leaderSecondsBySplit = new Map();
+          splitCells.forEach((cell) => {
+            cell.classList.remove("race-best-split-cell");
+          });
+
+          visibleRows.forEach((row) => {
+            row.querySelectorAll("[data-race-split-index][data-race-split-seconds]").forEach((cell) => {
+              const index = Number(cell.dataset.raceSplitIndex);
+              const seconds = Number(cell.dataset.raceSplitSeconds);
+              if (!Number.isFinite(index) || !Number.isFinite(seconds)) {
+                return;
+              }
+              const current = leaderSecondsBySplit.get(index);
+              if (typeof current === "undefined" || seconds < current) {
+                leaderSecondsBySplit.set(index, seconds);
+              }
+            });
+          });
+
+          visibleRows.forEach((row) => {
+            row.querySelectorAll("[data-race-split-index][data-race-split-seconds]").forEach((cell) => {
+              const index = Number(cell.dataset.raceSplitIndex);
+              const seconds = Number(cell.dataset.raceSplitSeconds);
+              if (leaderSecondsBySplit.get(index) === seconds) {
+                cell.classList.add("race-best-split-cell");
+              }
+            });
+          });
+
+          let cumulative = 0;
+          document.querySelectorAll("[data-virtual-split-index]").forEach((cell) => {
+            const index = Number(cell.dataset.virtualSplitIndex);
+            const seconds = leaderSecondsBySplit.get(index);
+            const value = cell.querySelector("[data-virtual-split-time]");
+            if (typeof seconds === "undefined" || !value) {
+              return;
+            }
+            cumulative += seconds;
+            value.textContent = formatSeconds(seconds);
+          });
+          if (virtualLeaderResult && leaderSecondsBySplit.size) {
+            virtualLeaderResult.textContent = formatSeconds(cumulative);
+          }
+        };
+
+        const updateLapRows = () => {
+          updateAnalysisMode();
+        };
+        lapToggle?.addEventListener("change", updateLapRows);
+        updateAnalysisMode();
       })();
     </script>
     {% if training %}

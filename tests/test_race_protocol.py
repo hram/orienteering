@@ -25,6 +25,13 @@ const eventMeta = "Не официальный";
 const db = "ЖВ| ||п/п|Фамилия, Имя|Номер|Баллы|Штраф|Итог|Результат|Место|#1|#2|#3||1|Иванова<br>Анна|10|3| |3|00:50:00|1|5:00[55]<br>|10:00[60]<br>5:00|15:00[65]<br>5:00||2|Петрова<br>Мария|11|2| |2|00:55:00|2|4:00[55]<br>|11:00[70]<br>7:00| |||";
 </script>"""
 
+RELAY_TWO_PERSON_PROTOCOL = """<!doctype html>
+<script>
+const eventName = "Кубок города. Эстафета";
+const eventMeta = "Промежуточные времена";
+const db = "Ж14| ||п/п|Фамилия, Имя|Номер|Результат|Место|Отст.|#1|#2|#3|#4|#F(240)||1|Аскарова<br>Екатерина|161.1|00:17:30|1| |2:40[40]<br>|4:06[34]<br>1:26|5:07[35]<br>1:01|6:10[37]<br>1:03|17:30<br>0:19||2|Марченко<br>Полина|165.1|00:18:42|4|+1:12|2:13[40]<br>|3:34[34]<br>1:21|4:31[36]<br>0:57|5:27[37]<br>0:56|18:42<br>0:24|||";
+</script>"""
+
 # Three participants who all run the same five legs through 31→32→33→34→35.
 # Per-leg splits give Anna the "good" tier on legs where she's fastest or close,
 # and "hot" tier on legs 2 and 4 where she loses by 2:00 to the leg leader —
@@ -353,6 +360,35 @@ def test_parse_score_race_protocol_html() -> None:
     runner_up = group["participants"][1]
     # Trailing empty visit cells are skipped, not stored as None.
     assert len(runner_up["visits"]) == 2
+
+
+def test_parse_two_person_relay_protocol_with_codes_in_split_cells() -> None:
+    protocol = parse_race_protocol_html(RELAY_TWO_PERSON_PROTOCOL)
+
+    assert protocol.kind == "course"
+    assert protocol.event_name == "Кубок города. Эстафета"
+    group = protocol.groups[0]
+    assert group["name"] == "Ж14"
+    assert [control["label"] for control in group["controls"]] == ["1", "2", "3", "4", "F"]
+    assert [control["code"] for control in group["controls"]] == ["", "", "", "", "240"]
+
+    leader = group["participants"][0]
+    assert leader["name"] == "Аскарова Екатерина"
+    assert leader["bib"] == "161.1"
+    assert leader["lap"] == "1"
+    assert len(leader["splits"]) == 5
+    assert leader["splits"][0]["code"] == "40"
+    assert leader["splits"][0]["cumulative"]["seconds"] == 160
+    assert leader["splits"][0]["split"]["seconds"] == 160
+    assert leader["splits"][1]["code"] == "34"
+    assert leader["splits"][1]["split"]["seconds"] == 86
+    assert leader["splits"][-1]["code"] == "240"
+    assert leader["splits"][-1]["split"]["seconds"] == 19
+
+    forked = group["participants"][1]
+    assert forked["lap"] == "1"
+    assert forked["splits"][2]["code"] == "36"
+    assert forked["splits"][2]["split"]["seconds"] == 57
 
 
 def test_prepare_score_result_view_marks_best_legs_and_self_gap() -> None:
@@ -1203,7 +1239,7 @@ def test_orgeo_import_flow(monkeypatch) -> None:
     assert "Анализ темпа" in detail.text
 
 
-def test_orgeo_relay_import_keeps_full_field_for_leader(monkeypatch) -> None:
+def test_orgeo_relay_import_keeps_full_field_with_lap_filter_toggle(monkeypatch) -> None:
     from portal.routers import race_results
 
     def fake_fetch(url: str) -> str:
@@ -1243,9 +1279,12 @@ def test_orgeo_relay_import_keeps_full_field_for_leader(monkeypatch) -> None:
     assert "Храмова" in detail.text
     assert "Полина" in detail.text
     assert "<strong>Участников</strong>\n            <span>4</span>" in detail.text
+    assert "Только мой забег" in detail.text
+    assert "этап 2" in detail.text
     assert "Зекова" in detail.text
     assert "Иванова" in detail.text
     assert "Доронина" in detail.text
+    assert detail.text.count('data-other-lap="true" hidden') == 2
 
 
 def test_display_place_falls_back_to_bib() -> None:
@@ -1286,6 +1325,7 @@ def test_course_relay_participants_are_sorted_by_display_result() -> None:
         "participants": [
             {"row_index": 0, "name": "Быстрая", "place": "1", "lap": "1", "result": "00:30:00", "splits": [{"split": {"seconds": 1800}}]},
             {"row_index": 1, "name": "Медленная", "place": "2", "lap": "2", "result": "00:40:00", "splits": [{"split": {"seconds": 2400}}]},
+            {"row_index": 2, "name": "Еще медленнее", "place": "3", "lap": "2", "result": "00:45:00", "splits": [{"split": {"seconds": 2700}}]},
         ],
         "controls": [],
         "self_row_index": 1,
@@ -1293,9 +1333,11 @@ def test_course_relay_participants_are_sorted_by_display_result() -> None:
 
     _prepare_race_result_view(result)
 
-    assert [participant["name"] for participant in result["participants"]] == ["Быстрая", "Медленная"]
-    assert result["participants"][0]["relative_gap_text"] == "-10:00"
-    assert result["participants"][0]["relative_gap_tone"] == "good"
+    assert [participant["name"] for participant in result["participants"]] == ["Быстрая", "Медленная", "Еще медленнее"]
+    assert result["participants"][0]["relative_gap_text"] == ""
+    assert result["participants"][0]["is_same_lap_as_self"] is False
+    assert result["participants"][2]["relative_gap_text"] == "+05:00"
+    assert result["participants"][2]["relative_gap_tone"] == "hot"
 
 
 def test_course_relay_gap_uses_self_display_result_even_if_self_is_later_in_list() -> None:
@@ -1306,6 +1348,7 @@ def test_course_relay_gap_uses_self_display_result_even_if_self_is_later_in_list
         "participants": [
             {"row_index": 0, "name": "Аскарова", "place": "1", "lap": "1", "result": "00:30:08", "splits": [{"split": {"seconds": 1808}}]},
             {"row_index": 1, "name": "Храмова", "place": "2", "lap": "2", "result": "01:09:13", "splits": [{"split": {"seconds": 1904}}]},
+            {"row_index": 2, "name": "Доронина", "place": "3", "lap": "2", "result": "01:10:20", "splits": [{"split": {"seconds": 1980}}]},
         ],
         "controls": [],
         "self_row_index": 1,
@@ -1314,9 +1357,35 @@ def test_course_relay_gap_uses_self_display_result_even_if_self_is_later_in_list
     _prepare_race_result_view(result)
 
     rival = next(participant for participant in result["participants"] if participant["name"] == "Аскарова")
+    same_lap_rival = next(participant for participant in result["participants"] if participant["name"] == "Доронина")
     self_participant = next(participant for participant in result["participants"] if participant["name"] == "Храмова")
     assert self_participant["display_result"] == "31:44"
-    assert rival["relative_gap_text"] == "-01:36"
+    assert rival["relative_gap_text"] == ""
+    assert same_lap_rival["relative_gap_text"] == "+01:16"
+
+
+def test_course_relay_virtual_leader_uses_bib_lap_when_lap_is_missing() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "kind": "course",
+        "participants": [
+            {"row_index": 0, "name": "Первый этап", "bib": "101.1", "result": "00:10:00", "splits": [{"split": {"seconds": 10}}, {"split": {"seconds": 10}}]},
+            {"row_index": 1, "name": "Я", "bib": "201.2", "result": "00:30:00", "splits": [{"split": {"seconds": 30}}, {"split": {"seconds": 30}}]},
+            {"row_index": 2, "name": "Мой этап", "bib": "202.2", "result": "00:24:00", "splits": [{"split": {"seconds": 20}}, {"split": {"seconds": 40}}]},
+        ],
+        "controls": [{}, {}],
+        "self_row_index": 1,
+    }
+
+    _prepare_race_result_view(result)
+
+    assert result["is_relay_lap_scoped"] is True
+    assert result["self_lap"] == "2"
+    assert result["virtual_leader"]["display_result"] == "00:50"
+    assert [split["split"]["seconds"] for split in result["virtual_leader"]["splits"]] == [20, 30]
+    first_lap = next(participant for participant in result["participants"] if participant["name"] == "Первый этап")
+    assert first_lap["is_same_lap_as_self"] is False
 
 
 def test_course_relay_display_place_is_sorted_position() -> None:
@@ -1337,6 +1406,47 @@ def test_course_relay_display_place_is_sorted_position() -> None:
 
     assert [participant["place"] for participant in result["participants"]] == ["1", "2", "3"]
     assert [participant["display_place"] for participant in result["participants"]] == ["1", "2", "3"]
+
+
+def test_js_relay_import_keeps_full_field_with_bib_lap_filter_toggle(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    relay_protocol = RELAY_TWO_PERSON_PROTOCOL.replace(
+        "2|Марченко<br>Полина|165.1|00:18:42|4|+1:12",
+        "2|Марченко<br>Полина|165.2|00:18:42|4|+1:12",
+    )
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: relay_protocol)
+
+    with TestClient(app) as client:
+        preview = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://example.test/relay-splits.html"},
+        )
+        options = re.findall(r'<option value="([^"]+)"[^>]*>(.*?)</option>', preview.text, re.S)
+        match = next((value for value, text in options if "Марченко Полина" in text), None)
+        assert match is not None
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://example.test/relay-splits.html",
+                "group_name": "Ж14",
+                "self_row_index": match,
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert preview.status_code == 200
+    assert "Марченко Полина · этап 2" in preview.text
+    assert save.status_code == 303
+    assert "Только мой забег" in detail.text
+    assert "этап 2" in detail.text
+    assert "Марченко" in detail.text
+    assert "Аскарова" in detail.text
+    assert 'data-other-lap="true" hidden' in detail.text
+    assert 'id="race-virtual-leader-row"' in detail.text
+    assert "data-virtual-split-index" in detail.text
+    assert "data-race-split-seconds" in detail.text
 
 
 def test_dashboard_problem_splits_panel_renders(monkeypatch) -> None:

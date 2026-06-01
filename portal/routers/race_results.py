@@ -409,6 +409,20 @@ def _filter_participants_for_import(participants: list[dict], self_participant: 
     return filtered or participants
 
 
+def _ensure_participant_laps_from_bib(participants: list[dict]) -> None:
+    for participant in participants:
+        if str(participant.get("lap") or "").strip():
+            continue
+        lap = _lap_from_bib(participant.get("bib") or participant.get("number") or participant.get("si") or "")
+        if lap:
+            participant["lap"] = lap
+
+
+def _lap_from_bib(value: object) -> str:
+    match = re.search(r"\.(\d+)\s*$", str(value or "").strip())
+    return match.group(1) if match else ""
+
+
 @router.get("/race-results/{race_result_id}", response_class=HTMLResponse)
 async def race_result_page(race_result_id: str, request: Request) -> HTMLResponse:
     conn = await connect_db(normalize_db_path(config.DB_PATH))
@@ -939,19 +953,27 @@ def _annotate_grabber_matches(search: dict, imported_results: list[dict]) -> Non
 
 def _prepare_race_result_view(result: dict) -> None:
     participants = result.get("participants", [])
-    leader_split_by_split = _leader_split_seconds_by_split(participants)
+    _ensure_participant_laps_from_bib(participants)
     self_row_index = result.get("self_row_index")
     self_participant = next((participant for participant in participants if participant.get("row_index") == self_row_index), None)
+    analysis_participants = _filter_participants_for_import(participants, self_participant) if self_participant else participants
+    if self_participant and self_participant not in analysis_participants:
+        analysis_participants = [*analysis_participants, self_participant]
+    is_lap_scoped = analysis_participants is not participants and len(analysis_participants) != len(participants)
+    analysis_row_indexes = {participant.get("row_index") for participant in analysis_participants}
+    leader_split_by_split = _leader_split_seconds_by_split(analysis_participants)
     self_display_result = _display_result_text(self_participant, result.get("kind")) if self_participant else ""
     self_seconds = _display_result_seconds({"display_result": self_display_result, "result": self_participant.get("result") if self_participant else None})
     hot_gap_indexes, warm_gap_indexes, good_gap_indexes = _classify_gap_indexes(self_participant, leader_split_by_split)
     problem_indexes = hot_gap_indexes | warm_gap_indexes
     controls = result.get("controls", [])
+    result["is_relay_lap_scoped"] = is_lap_scoped
+    result["self_lap"] = str(self_participant.get("lap") or "").strip() if self_participant else ""
     result["problem_split_indexes"] = sorted(problem_indexes)
-    result["virtual_leader"] = _virtual_leader_participant(participants, leader_split_by_split, controls)
+    result["virtual_leader"] = _virtual_leader_participant(analysis_participants, leader_split_by_split, controls)
     result["pace_distribution"] = _pace_distribution_view(result["virtual_leader"], controls)
     result["self_problem_total_gap"] = _self_problem_total_gap(self_participant, leader_split_by_split, problem_indexes)
-    result["reachability_chart"] = _reachability_chart_view(result, self_participant)
+    result["reachability_chart"] = _reachability_chart_view({**result, "participants": analysis_participants}, self_participant)
     if self_participant:
         for split_index, split in enumerate(self_participant.get("splits", [])):
             split_time = _split_stage_time(split, split_index)
@@ -962,11 +984,12 @@ def _prepare_race_result_view(result: dict) -> None:
             split_time["pace"] = _format_pace(split_time.get("seconds"), distance)
 
     for participant in participants:
+        participant["is_same_lap_as_self"] = not is_lap_scoped or participant.get("row_index") in analysis_row_indexes
         participant["display_place"] = _display_place_text(participant)
         participant["display_result"] = _display_result_text(participant, result.get("kind"))
         participant["relative_gap_text"] = ""
         participant["relative_gap_tone"] = ""
-        if self_participant and participant.get("row_index") != self_row_index:
+        if self_participant and participant.get("row_index") != self_row_index and participant["is_same_lap_as_self"]:
             participant_seconds = _display_result_seconds(participant)
             if participant_seconds is not None and self_seconds is not None:
                 if result.get("kind") == "course" and any(str(item.get("lap") or "").strip() for item in participants):
