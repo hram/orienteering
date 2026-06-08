@@ -321,6 +321,7 @@ def test_import_track_page_renders() -> None:
     assert 'form="finish-import-form">Завершить импорт' in response.text
     assert "Загрузить GPX" in response.text
     assert "splits-table-body" not in response.text
+    assert "track-map-layer-tabs" not in response.text
 
 
 def test_import_track_can_be_deleted_from_draft() -> None:
@@ -654,6 +655,7 @@ def test_training_player_page_renders_after_import_finish() -> None:
     assert "split-debug-snapshot" in response.text
     assert "split-pace-chart" in response.text
     assert "Темп" in response.text
+    assert "player-map-layer-tabs" not in response.text
 
 
 def test_training_can_be_deleted_from_listing() -> None:

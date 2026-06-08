@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS trainings (
     notes           TEXT,
     course_controls TEXT,
     track_points    TEXT,
+    map_layers      TEXT,
     created_at      TEXT NOT NULL,
     FOREIGN KEY (map_id) REFERENCES maps(map_id)
 );
@@ -76,6 +77,7 @@ CREATE TABLE IF NOT EXISTS training_import_drafts (
     georef_transform      TEXT,
     georef_residuals      TEXT,
     course_controls       TEXT,
+    map_layers            TEXT,
     track_gpx_path        TEXT,
     track_gpx_filename    TEXT,
     track_points          TEXT,
@@ -310,6 +312,115 @@ def deserialize_json(value: str | None, default: Any = None) -> Any:
     return json.loads(value)
 
 
+def normalize_map_layers(value: Any, legacy: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    layers = value
+    if isinstance(value, str):
+        layers = deserialize_json(value, [])
+    if isinstance(layers, list) and layers:
+        return [_normalize_map_layer(layer, index) for index, layer in enumerate(layers)]
+
+    legacy = legacy or {}
+    if any(
+        legacy.get(key)
+        for key in (
+            "map_image_path",
+            "georef_transform",
+            "georef_control_points",
+            "course_controls",
+        )
+    ):
+        return [
+            _normalize_map_layer(
+                {
+                    "id": "map-1",
+                    "title": "Карта 1",
+                    "image_path": legacy.get("map_image_path"),
+                    "image_filename": legacy.get("map_image_filename"),
+                    "georef_method": legacy.get("georef_method"),
+                    "georef_control_points": legacy.get("georef_control_points") or [],
+                    "georef_transform": legacy.get("georef_transform"),
+                    "georef_residuals": legacy.get("georef_residuals") or [],
+                    "course_controls": legacy.get("course_controls") or [],
+                },
+                0,
+            )
+        ]
+
+    return [_normalize_map_layer({"id": "map-1", "title": "Карта 1"}, 0)]
+
+
+def _normalize_map_layer(layer: Any, index: int) -> dict[str, Any]:
+    source = dict(layer) if isinstance(layer, dict) else {}
+    layer_id = str(source.get("id") or f"map-{index + 1}")
+    title = str(source.get("title") or f"Карта {index + 1}")
+    return {
+        "id": layer_id,
+        "title": title,
+        "image_path": source.get("image_path"),
+        "image_filename": source.get("image_filename"),
+        "georef_method": source.get("georef_method"),
+        "georef_control_points": source.get("georef_control_points") or [],
+        "georef_transform": source.get("georef_transform"),
+        "georef_residuals": source.get("georef_residuals") or [],
+        "course_controls": source.get("course_controls") or [],
+    }
+
+
+def first_complete_map_layer(layers: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for layer in layers:
+        if layer.get("image_path"):
+            return layer
+    return layers[0] if layers else None
+
+
+def normalize_course_controls_for_layers(
+    layers: list[dict[str, Any]],
+    *,
+    training_type: str | None = None,
+) -> list[dict[str, Any]]:
+    flat_controls: list[tuple[dict[str, Any], int, dict[str, Any]]] = []
+    for layer in layers:
+        controls = layer.get("course_controls") or []
+        if not isinstance(controls, list):
+            controls = []
+        layer["course_controls"] = controls
+        for layer_index, control in enumerate(controls):
+            if isinstance(control, dict):
+                flat_controls.append((layer, layer_index, control))
+
+    total = len(flat_controls)
+    is_rogaine = training_type == "rogaine"
+    for global_index, (layer, layer_index, control) in enumerate(flat_controls):
+        layer["course_controls"][layer_index] = {
+            **control,
+            "index": global_index + 1,
+            "label": course_control_label(global_index, total, is_rogaine=is_rogaine),
+            "kind": course_control_kind(global_index, total, is_rogaine=is_rogaine),
+            "map_layer_id": control.get("map_layer_id") or layer.get("id"),
+        }
+    return layers
+
+
+def course_control_label(index: int, total: int, *, is_rogaine: bool = False) -> str:
+    if index == 0:
+        return "С"
+    if not is_rogaine and total > 2 and index == 1:
+        return "К"
+    if total > 1 and index == total - 1:
+        return "Ф"
+    return str(index if is_rogaine else index - 1)
+
+
+def course_control_kind(index: int, total: int, *, is_rogaine: bool = False) -> str:
+    if index == 0:
+        return "start"
+    if not is_rogaine and total > 2 and index == 1:
+        return "start-point"
+    if total > 1 and index == total - 1:
+        return "finish"
+    return "control"
+
+
 def error_reason_from_row(row: aiosqlite.Row) -> dict[str, Any]:
     result = dict(row)
     result["is_active"] = bool(result.get("is_active"))
@@ -339,6 +450,8 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
         await conn.execute("UPDATE training_import_drafts SET discipline = 'run' WHERE discipline IS NULL OR discipline = ''")
     if "course_controls" not in draft_columns:
         await conn.execute("ALTER TABLE training_import_drafts ADD COLUMN course_controls TEXT")
+    if "map_layers" not in draft_columns:
+        await conn.execute("ALTER TABLE training_import_drafts ADD COLUMN map_layers TEXT")
     if "track_gpx_path" not in draft_columns:
         await conn.execute("ALTER TABLE training_import_drafts ADD COLUMN track_gpx_path TEXT")
     if "track_gpx_filename" not in draft_columns:
@@ -365,6 +478,9 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
         await conn.execute("ALTER TABLE trainings ADD COLUMN course_controls TEXT")
     if "track_points" not in training_columns:
         await conn.execute("ALTER TABLE trainings ADD COLUMN track_points TEXT")
+    if "map_layers" not in training_columns:
+        await conn.execute("ALTER TABLE trainings ADD COLUMN map_layers TEXT")
+    await _backfill_map_layers(conn)
 
     cursor = await conn.execute("PRAGMA table_info(race_results)")
     race_result_columns = {row["name"] for row in await cursor.fetchall()}
@@ -387,6 +503,61 @@ async def _migrate_schema(conn: aiosqlite.Connection) -> None:
         )
         """
     )
+
+
+async def _backfill_map_layers(conn: aiosqlite.Connection) -> None:
+    cursor = await conn.execute(
+        """
+        SELECT
+            t.training_id,
+            t.course_controls,
+            m.image_path AS map_image_path,
+            g.method AS georef_method,
+            g.control_points AS georef_control_points,
+            g.transform AS georef_transform,
+            g.residuals AS georef_residuals
+        FROM trainings t
+        LEFT JOIN maps m ON m.map_id = t.map_id
+        LEFT JOIN map_georeferences g ON g.map_id = t.map_id
+        WHERE t.map_layers IS NULL OR t.map_layers = ''
+        """
+    )
+    for row in await cursor.fetchall():
+        legacy = {
+            "map_image_path": row["map_image_path"],
+            "georef_method": row["georef_method"],
+            "georef_control_points": deserialize_json(row["georef_control_points"] or None, []),
+            "georef_transform": deserialize_json(row["georef_transform"] or None, None),
+            "georef_residuals": deserialize_json(row["georef_residuals"] or None, []),
+            "course_controls": deserialize_json(row["course_controls"] or None, []),
+        }
+        await conn.execute(
+            "UPDATE trainings SET map_layers = ? WHERE training_id = ?",
+            (serialize_json(normalize_course_controls_for_layers(normalize_map_layers(None, legacy))), row["training_id"]),
+        )
+
+    cursor = await conn.execute(
+        """
+        SELECT *
+        FROM training_import_drafts
+        WHERE map_layers IS NULL OR map_layers = ''
+        """
+    )
+    for row in await cursor.fetchall():
+        draft = dict(row)
+        legacy = {
+            "map_image_path": draft.get("map_image_path"),
+            "map_image_filename": draft.get("map_image_filename"),
+            "georef_method": draft.get("georef_method"),
+            "georef_control_points": deserialize_json(draft.get("georef_control_points") or None, []),
+            "georef_transform": deserialize_json(draft.get("georef_transform") or None, None),
+            "georef_residuals": deserialize_json(draft.get("georef_residuals") or None, []),
+            "course_controls": deserialize_json(draft.get("course_controls") or None, []),
+        }
+        await conn.execute(
+            "UPDATE training_import_drafts SET map_layers = ? WHERE draft_id = ?",
+            (serialize_json(normalize_course_controls_for_layers(normalize_map_layers(None, legacy))), draft["draft_id"]),
+        )
 
 
 async def _deduplicate_split_error_reviews(conn: aiosqlite.Connection) -> None:
@@ -535,16 +706,20 @@ async def _create_import_draft_from_training(
     track_gpx_path = training.get("gpx_path") if include_track else None
     track_gpx_filename = Path(training["gpx_path"]).name if include_track and training.get("gpx_path") else None
     track_points = training.get("track_points") if include_track else None
+    map_layers = normalize_course_controls_for_layers(
+        normalize_map_layers(training.get("map_layers"), training),
+        training_type=training.get("training_type"),
+    )
     await conn.execute(
         """
         INSERT INTO training_import_drafts (
             draft_id, title, date, training_type, discipline, location, notes,
             map_image_path, map_image_filename,
             georef_method, georef_control_points, georef_transform, georef_residuals,
-            course_controls, track_gpx_path, track_gpx_filename, track_points,
+            course_controls, map_layers, track_gpx_path, track_gpx_filename, track_points,
             edit_training_id, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             draft_id,
@@ -557,10 +732,11 @@ async def _create_import_draft_from_training(
             training.get("map_image_path"),
             Path(training["map_image_path"]).name if training.get("map_image_path") else None,
             training.get("georef_method"),
-            training.get("georef_control_points"),
-            training.get("georef_transform"),
-            training.get("georef_residuals"),
-            training.get("course_controls"),
+            serialize_json(training.get("georef_control_points") or []),
+            serialize_json(training.get("georef_transform")),
+            serialize_json(training.get("georef_residuals") or []),
+            serialize_json(training.get("course_controls") or []),
+            serialize_json(map_layers),
             track_gpx_path,
             track_gpx_filename,
             track_points,
@@ -1099,14 +1275,34 @@ async def set_import_draft_map_image(
     *,
     image_path: str,
     filename: str,
+    layer_id: str = "map-1",
 ) -> dict[str, Any] | None:
+    draft = await get_import_draft(conn, draft_id)
+    if draft is None:
+        return None
+    layers = _update_draft_map_layer(
+        draft,
+        layer_id,
+        image_path=image_path,
+        image_filename=filename,
+    )
+    first_layer = first_complete_map_layer(layers) or {}
     await conn.execute(
         """
         UPDATE training_import_drafts
-        SET map_image_path = ?, map_image_filename = ?, updated_at = ?
+        SET map_image_path = ?,
+            map_image_filename = ?,
+            map_layers = ?,
+            updated_at = ?
         WHERE draft_id = ?
         """,
-        (image_path, filename, utc_now_iso(), draft_id),
+        (
+            first_layer.get("image_path"),
+            first_layer.get("image_filename"),
+            serialize_json(layers),
+            utc_now_iso(),
+            draft_id,
+        ),
     )
     await conn.commit()
     return await get_import_draft(conn, draft_id)
@@ -1120,7 +1316,20 @@ async def set_import_draft_georef(
     control_points: list[dict[str, Any]],
     transform: dict[str, Any],
     residuals: list[dict[str, Any]],
+    layer_id: str = "map-1",
 ) -> dict[str, Any] | None:
+    draft = await get_import_draft(conn, draft_id)
+    if draft is None:
+        return None
+    layers = _update_draft_map_layer(
+        draft,
+        layer_id,
+        georef_method=method,
+        georef_control_points=control_points,
+        georef_transform=transform,
+        georef_residuals=residuals,
+    )
+    first_layer = first_complete_map_layer(layers) or {}
     await conn.execute(
         """
         UPDATE training_import_drafts
@@ -1128,14 +1337,16 @@ async def set_import_draft_georef(
             georef_control_points = ?,
             georef_transform = ?,
             georef_residuals = ?,
+            map_layers = ?,
             updated_at = ?
         WHERE draft_id = ?
         """,
         (
-            method,
-            serialize_json(control_points),
-            serialize_json(transform),
-            serialize_json(residuals),
+            first_layer.get("georef_method") or "affine",
+            serialize_json(first_layer.get("georef_control_points") or []),
+            serialize_json(first_layer.get("georef_transform")),
+            serialize_json(first_layer.get("georef_residuals") or []),
+            serialize_json(layers),
             utc_now_iso(),
             draft_id,
         ),
@@ -1149,17 +1360,89 @@ async def set_import_draft_course_controls(
     draft_id: str,
     *,
     controls: list[dict[str, Any]],
+    layer_id: str = "map-1",
 ) -> dict[str, Any] | None:
+    draft = await get_import_draft(conn, draft_id)
+    if draft is None:
+        return None
+    normalized_controls = [
+        {**control, "map_layer_id": control.get("map_layer_id") or layer_id}
+        for control in controls
+    ]
+    layers = _update_draft_map_layer(draft, layer_id, course_controls=normalized_controls)
+    layers = normalize_course_controls_for_layers(
+        layers,
+        training_type=draft.get("training_type"),
+    )
+    first_layer = first_complete_map_layer(layers) or {}
     await conn.execute(
         """
         UPDATE training_import_drafts
-        SET course_controls = ?, updated_at = ?
+        SET course_controls = ?, map_layers = ?, updated_at = ?
         WHERE draft_id = ?
         """,
-        (serialize_json(controls), utc_now_iso(), draft_id),
+        (
+            serialize_json(first_layer.get("course_controls") or []),
+            serialize_json(layers),
+            utc_now_iso(),
+            draft_id,
+        ),
     )
     await conn.commit()
     return await get_import_draft(conn, draft_id)
+
+
+async def add_import_draft_map_layer(
+    conn: aiosqlite.Connection,
+    draft_id: str,
+    *,
+    title: str | None = None,
+) -> dict[str, Any] | None:
+    draft = await get_import_draft(conn, draft_id)
+    if draft is None:
+        return None
+    layers = normalize_course_controls_for_layers(
+        normalize_map_layers(draft.get("map_layers"), draft),
+        training_type=draft.get("training_type"),
+    )
+    next_number = len(layers) + 1
+    layer_id = f"map-{next_number}"
+    while any(layer.get("id") == layer_id for layer in layers):
+        next_number += 1
+        layer_id = f"map-{next_number}"
+    layers.append(_normalize_map_layer({"id": layer_id, "title": title or f"Карта {next_number}"}, next_number - 1))
+    await conn.execute(
+        """
+        UPDATE training_import_drafts
+        SET map_layers = ?, updated_at = ?
+        WHERE draft_id = ?
+        """,
+        (serialize_json(layers), utc_now_iso(), draft_id),
+    )
+    await conn.commit()
+    return await get_import_draft(conn, draft_id)
+
+
+def _update_draft_map_layer(
+    draft: dict[str, Any],
+    layer_id: str,
+    **updates: Any,
+) -> list[dict[str, Any]]:
+    layers = normalize_course_controls_for_layers(
+        normalize_map_layers(draft.get("map_layers"), draft),
+        training_type=draft.get("training_type"),
+    )
+    for index, layer in enumerate(layers):
+        if layer.get("id") == layer_id:
+            layers[index] = {**layer, **updates}
+            return layers
+    layers.append(
+        _normalize_map_layer(
+            {"id": layer_id, "title": f"Карта {len(layers) + 1}", **updates},
+            len(layers),
+        )
+    )
+    return layers
 
 
 async def set_import_draft_track(
@@ -1529,13 +1812,18 @@ async def finalize_import_draft(
             return None
 
     map_id = existing_training.get("map_id") if existing_training else None
-    if map_id is None and draft.get("map_image_path"):
+    map_layers = normalize_course_controls_for_layers(
+        normalize_map_layers(draft.get("map_layers"), draft),
+        training_type=draft.get("training_type"),
+    )
+    primary_layer = first_complete_map_layer(map_layers) or {}
+    if map_id is None and primary_layer.get("image_path"):
         map_id = uuid4().hex
     if map_id is not None:
         if existing_training and existing_training.get("map_id"):
             await conn.execute(
                 "UPDATE maps SET title = ?, image_path = ? WHERE map_id = ?",
-                (draft["title"], draft["map_image_path"], map_id),
+                (draft["title"], primary_layer.get("image_path"), map_id),
             )
         else:
             await conn.execute(
@@ -1543,10 +1831,10 @@ async def finalize_import_draft(
                 INSERT INTO maps (map_id, title, image_path, created_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                (map_id, draft["title"], draft["map_image_path"], now),
+                (map_id, draft["title"], primary_layer.get("image_path"), now),
             )
 
-    if map_id is not None and draft.get("georef_transform"):
+    if map_id is not None and primary_layer.get("georef_transform"):
         await conn.execute(
             """
             INSERT INTO map_georeferences (
@@ -1561,10 +1849,10 @@ async def finalize_import_draft(
             """,
             (
                 map_id,
-                draft.get("georef_method") or "affine",
-                serialize_json(draft.get("georef_control_points") or []),
-                serialize_json(draft["georef_transform"]),
-                serialize_json(draft.get("georef_residuals") or []),
+                primary_layer.get("georef_method") or "affine",
+                serialize_json(primary_layer.get("georef_control_points") or []),
+                serialize_json(primary_layer["georef_transform"]),
+                serialize_json(primary_layer.get("georef_residuals") or []),
                 now,
             ),
         )
@@ -1583,7 +1871,8 @@ async def finalize_import_draft(
                 gpx_path = ?,
                 notes = ?,
                 course_controls = ?,
-                track_points = ?
+                track_points = ?,
+                map_layers = ?
             WHERE training_id = ?
             """,
             (
@@ -1595,8 +1884,9 @@ async def finalize_import_draft(
                 map_id,
                 draft.get("track_gpx_path"),
                 draft.get("notes"),
-                serialize_json(draft.get("course_controls") or []),
+                serialize_json(primary_layer.get("course_controls") or []),
                 serialize_json(draft.get("track_points") or []),
+                serialize_json(map_layers),
                 training_id,
             ),
         )
@@ -1616,9 +1906,9 @@ async def finalize_import_draft(
         """
         INSERT INTO trainings (
             training_id, title, date, training_type, discipline, location, map_id, gpx_path,
-            notes, course_controls, track_points, created_at
+            notes, course_controls, track_points, map_layers, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             training_id,
@@ -1630,8 +1920,9 @@ async def finalize_import_draft(
             map_id,
             draft.get("track_gpx_path"),
             draft.get("notes"),
-            serialize_json(draft.get("course_controls") or []),
+            serialize_json(primary_layer.get("course_controls") or []),
             serialize_json(draft.get("track_points") or []),
+            serialize_json(map_layers),
             now,
         ),
     )
@@ -1751,7 +2042,16 @@ async def get_training_import_source(conn: aiosqlite.Connection, training_id: st
     row = await cursor.fetchone()
     if row is None:
         return None
-    return dict(row)
+    training = dict(row)
+    training["georef_control_points"] = deserialize_json(training.get("georef_control_points"), [])
+    training["georef_transform"] = deserialize_json(training.get("georef_transform"), None)
+    training["georef_residuals"] = deserialize_json(training.get("georef_residuals"), [])
+    training["course_controls"] = deserialize_json(training.get("course_controls"), [])
+    training["map_layers"] = normalize_course_controls_for_layers(
+        normalize_map_layers(training.get("map_layers"), training),
+        training_type=training.get("training_type"),
+    )
+    return training
 
 
 async def get_training_player(conn: aiosqlite.Connection, training_id: str) -> dict[str, Any] | None:
@@ -1775,6 +2075,10 @@ async def get_training_player(conn: aiosqlite.Connection, training_id: str) -> d
     training["course_controls"] = deserialize_json(training.get("course_controls"), [])
     training["track_points"] = deserialize_json(training.get("track_points"), [])
     training["georef_transform"] = deserialize_json(training.get("georef_transform"), None)
+    training["map_layers"] = normalize_course_controls_for_layers(
+        normalize_map_layers(training.get("map_layers"), training),
+        training_type=training.get("training_type"),
+    )
     return training
 
 
@@ -1785,6 +2089,10 @@ def import_draft_from_row(row: aiosqlite.Row) -> dict[str, Any]:
     draft["georef_residuals"] = deserialize_json(draft.get("georef_residuals"), [])
     draft["course_controls"] = deserialize_json(draft.get("course_controls"), [])
     draft["track_points"] = deserialize_json(draft.get("track_points"), [])
+    draft["map_layers"] = normalize_course_controls_for_layers(
+        normalize_map_layers(draft.get("map_layers"), draft),
+        training_type=draft.get("training_type"),
+    )
     return draft
 
 

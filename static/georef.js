@@ -5,9 +5,12 @@
   }
 
   const draftId = workspace.dataset.draftId;
+  let activeLayerId = workspace.dataset.activeLayerId || "map-1";
   const isRogaine = workspace.dataset.trainingType === "rogaine";
   const uploadForm = document.querySelector("#map-upload-form");
+  const addLayerForm = document.querySelector("#add-map-layer-form");
   const image = document.querySelector("#map-image");
+  const emptyStage = document.querySelector("#map-empty-stage");
   const imageStage = document.querySelector(".image-stage");
   const imageViewport = document.querySelector("#image-viewport");
   const imageContent = document.querySelector("#image-content");
@@ -26,17 +29,22 @@
   const modeTabs = Array.from(document.querySelectorAll(".mode-tab"));
   const modePanels = Array.from(document.querySelectorAll(".mode-panel"));
   const modeActions = Array.from(document.querySelectorAll(".mode-actions"));
+  const layerTabsContainer = document.querySelector(".map-layer-tabs");
+  let layerTabs = Array.from(document.querySelectorAll(".map-layer-tab"));
 
-  let points = parseExistingPoints(workspace.dataset.existingPoints);
-  let courseControls = parseExistingPoints(workspace.dataset.existingCourseControls);
+  let mapLayers = normalizeMapLayers(parseExistingObject(workspace.dataset.mapLayers));
+  let activeLayer = findMapLayer(activeLayerId) || mapLayers[0];
+  activeLayerId = activeLayer.id;
+  let points = [];
+  let courseControls = [];
   let pendingPixel = null;
   let leafletMap = null;
   let geoMarkers = [];
   let courseMarkers = [];
   let courseLine = [];
   let fittingPreview = false;
-  let currentMode = workspace.dataset.imageUrl ? "georef" : "file";
-  let currentTransform = parseExistingObject(workspace.dataset.existingTransform);
+  let currentMode = activeLayer.map_image_url ? "georef" : "file";
+  let currentTransform = null;
   let overlayImage = null;
   let imageView = {
     scale: 1,
@@ -45,14 +53,17 @@
   };
   let imageDrag = null;
 
-  renumberCourseControls();
+  loadActiveLayerState({preserveMode: false});
+  bindLayerTabs();
+  stopViewportGestures(layerTabsContainer);
 
   uploadForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    storeActiveLayerState();
     const formData = new FormData(uploadForm);
     setUploadStatus("Загружаю карту...");
 
-    const response = await fetch(`/api/imports/${draftId}/map-image`, {
+    const response = await fetch(`/api/imports/${draftId}/map-layers/${activeLayerId}/map-image`, {
       method: "POST",
       body: formData,
     });
@@ -62,13 +73,33 @@
       return;
     }
 
-    window.location.reload();
+    const payload = await response.json();
+    mergeServerMapLayers(payload.draft?.map_layers || [], {preserveActiveLocal: true});
+    activeLayer = findMapLayer(activeLayerId) || activeLayer;
+    loadActiveLayerState({preserveMode: false});
+    resetUploadForm();
+    setUploadStatus("Картинка карты загружена.");
+  });
+
+  addLayerForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    storeActiveLayerState();
+    const response = await fetch(`/api/imports/${draftId}/map-layers`, {method: "POST"});
+    if (!response.ok) {
+      setUploadStatus(await response.text());
+      return;
+    }
+    const payload = await response.json();
+    mergeServerMapLayers(payload.draft?.map_layers || [], {preserveActiveLocal: true});
+    renderLayerTabs();
+    setActiveLayer(payload.layer?.id || mapLayers.at(-1)?.id || activeLayerId);
   });
 
   if (image) {
     image.addEventListener("load", () => {
       fitImageToViewport();
       drawImageMarkers();
+      updateMapOverlay();
     });
     if (image.complete) {
       fitImageToViewport();
@@ -76,7 +107,7 @@
   }
 
   imageViewport?.addEventListener("wheel", (event) => {
-    if (!image) {
+    if (!activeLayer.map_image_url || !image) {
       return;
     }
     event.preventDefault();
@@ -90,7 +121,7 @@
   }, {passive: false});
 
   imageViewport?.addEventListener("pointerdown", (event) => {
-    if (!image) {
+    if (!activeLayer.map_image_url || !image) {
       return;
     }
     imageViewport.setPointerCapture(event.pointerId);
@@ -122,7 +153,7 @@
   imageViewport?.addEventListener("pointerup", (event) => {
     const wasClick = imageDrag && !imageDrag.moved;
     finishImageDrag(event);
-    if (!wasClick || !image) {
+    if (!wasClick || !activeLayer.map_image_url || !image) {
       return;
     }
     const pixel = clientPointToImagePixel(event.clientX, event.clientY);
@@ -160,7 +191,7 @@
       return;
     }
 
-    const response = await fetch(`/api/imports/${draftId}/georef`, {
+    const response = await fetch(`/api/imports/${draftId}/map-layers/${activeLayerId}/georef`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({control_points: points}),
@@ -173,6 +204,7 @@
 
     const payload = await response.json();
     currentTransform = payload.transform;
+    storeActiveLayerState();
     updateMapOverlay();
     result.textContent = `Сохранено. Максимальная ошибка: ${payload.max_residual_meters.toFixed(1)} м.`;
     updateCourseModeAvailability();
@@ -184,18 +216,34 @@
       return;
     }
 
-    const response = await fetch(`/api/imports/${draftId}/course-controls`, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({controls: normalizedCourseControls()}),
-    });
+    storeActiveLayerState();
+    let savedCount = 0;
+    let latestPayload = null;
+    for (const layer of mapLayers) {
+      const controls = parseExistingPoints(layer.course_controls);
+      if (!controls.length && layer.id !== activeLayerId) {
+        continue;
+      }
+      const response = await fetch(`/api/imports/${draftId}/map-layers/${layer.id}/course-controls`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({controls}),
+      });
 
-    if (!response.ok) {
-      courseResult.textContent = await response.text();
-      return;
+      if (!response.ok) {
+        courseResult.textContent = await response.text();
+        return;
+      }
+      savedCount += controls.length;
+      latestPayload = await response.json();
     }
 
-    courseResult.textContent = `Сохранено КП: ${courseControls.length}.`;
+    mergeServerMapLayers(latestPayload?.draft?.map_layers || [], {preserveActiveLocal: true});
+    activeLayer = findMapLayer(activeLayerId) || activeLayer;
+    courseControls = parseExistingPoints(activeLayer.course_controls);
+    renumberCourseControls();
+    courseResult.textContent = `Сохранено КП: ${savedCount}.`;
+    drawAll();
   });
 
   overlayOpacity?.addEventListener("input", () => {
@@ -272,6 +320,147 @@
     });
   }
 
+  function bindLayerTabs() {
+    layerTabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        setActiveLayer(tab.dataset.layerId || "map-1");
+      });
+    });
+  }
+
+  function setActiveLayer(layerId) {
+    const nextLayer = findMapLayer(layerId);
+    if (!nextLayer || nextLayer.id === activeLayerId) {
+      return;
+    }
+    storeActiveLayerState();
+    activeLayerId = nextLayer.id;
+    activeLayer = nextLayer;
+    loadActiveLayerState({preserveMode: true});
+  }
+
+  function storeActiveLayerState() {
+    const layer = findMapLayer(activeLayerId);
+    if (!layer) {
+      return;
+    }
+    layer.georef_control_points = points.map(copyPoint);
+    layer.georef_transform = currentTransform ? {...currentTransform} : null;
+    layer.course_controls = courseControls.map(copyPoint);
+    renumberCourseControls();
+  }
+
+  function loadActiveLayerState(options = {}) {
+    activeLayer = findMapLayer(activeLayerId) || mapLayers[0];
+    activeLayerId = activeLayer.id;
+    points = parseExistingPoints(activeLayer.georef_control_points);
+    courseControls = parseExistingPoints(activeLayer.course_controls);
+    currentTransform = activeLayer.georef_transform || null;
+    pendingPixel = null;
+    renumberCourseControls();
+    updateLayerTabs();
+    resetUploadForm();
+    updateImageForActiveLayer();
+    if (!options.preserveMode || !activeLayer.map_image_url) {
+      currentMode = activeLayer.map_image_url ? "georef" : "file";
+    } else if (currentMode === "course" && !currentTransform) {
+      currentMode = "georef";
+    } else if (currentMode === "file" && activeLayer.map_image_url) {
+      currentMode = "georef";
+    }
+    setMode(currentMode);
+    updateCourseModeAvailability();
+    removeMapOverlay();
+    drawAll();
+  }
+
+  function updateImageForActiveLayer() {
+    if (!image) {
+      return;
+    }
+    const imageUrl = activeLayer.map_image_url || "";
+    image.hidden = !imageUrl;
+    if (emptyStage) {
+      emptyStage.hidden = Boolean(imageUrl);
+    }
+    if (!imageUrl) {
+      image.removeAttribute("src");
+      imageContent.style.width = "";
+      imageContent.style.height = "";
+      imageView = {scale: 1, translateX: 0, translateY: 0};
+      imageContent.style.transform = "";
+      removeMapOverlay();
+      return;
+    }
+    if (imageUrl && image.getAttribute("src") !== imageUrl) {
+      image.src = imageUrl;
+      return;
+    }
+    if (imageUrl && image.complete) {
+      fitImageToViewport();
+    }
+  }
+
+  function resetUploadForm() {
+    const input = uploadForm?.querySelector('input[type="file"]');
+    if (input) {
+      input.value = "";
+    }
+  }
+
+  function renderLayerTabs() {
+    if (!layerTabsContainer || !addLayerForm) {
+      return;
+    }
+    layerTabs.forEach((tab) => tab.remove());
+    mapLayers.forEach((layer) => {
+      const tab = document.createElement("button");
+      tab.className = "map-layer-tab";
+      tab.type = "button";
+      tab.dataset.layerId = layer.id;
+      tab.textContent = layer.title;
+      layerTabsContainer.insertBefore(tab, addLayerForm);
+    });
+    layerTabs = Array.from(document.querySelectorAll(".map-layer-tab"));
+    bindLayerTabs();
+    updateLayerTabs();
+  }
+
+  function updateLayerTabs() {
+    layerTabs.forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.layerId === activeLayerId);
+    });
+  }
+
+  function mergeServerMapLayers(serverLayers, options = {}) {
+    const nextLayers = normalizeMapLayers(serverLayers);
+    for (const nextLayer of nextLayers) {
+      const existing = findMapLayer(nextLayer.id);
+      if (!existing) {
+        mapLayers.push(nextLayer);
+        continue;
+      }
+      const localState = options.preserveActiveLocal && existing.id === activeLayerId
+        ? {
+            georef_control_points: existing.georef_control_points,
+            georef_transform: existing.georef_transform,
+            course_controls: existing.course_controls,
+          }
+        : null;
+      Object.assign(existing, nextLayer);
+      if (localState) {
+        Object.assign(existing, localState);
+      }
+    }
+    if (!findMapLayer(activeLayerId)) {
+      activeLayerId = mapLayers[0].id;
+    }
+  }
+
+  function findMapLayer(layerId) {
+    return mapLayers.find((layer) => layer.id === layerId) || null;
+  }
+
   async function fitPreview() {
     if (fittingPreview) {
       return;
@@ -281,6 +470,7 @@
       return;
     }
     fittingPreview = true;
+    const previewLayerId = activeLayerId;
 
     try {
       const response = await fetch("/api/georef/fit", {
@@ -295,7 +485,11 @@
       }
 
       const payload = await response.json();
+      if (previewLayerId !== activeLayerId) {
+        return;
+      }
       currentTransform = payload.transform;
+      storeActiveLayerState();
       updateMapOverlay();
       result.textContent = `Предпросмотр: максимальная ошибка ${payload.max_residual_meters.toFixed(1)} м.`;
     } finally {
@@ -318,7 +512,7 @@
 
   function drawImageMarkers() {
     imageStage?.querySelectorAll(".image-marker").forEach((marker) => marker.remove());
-    if (!image) {
+    if (!image || !activeLayer.map_image_url) {
       return;
     }
 
@@ -562,7 +756,7 @@
     pendingPixel = null;
     drawImageMarkers();
     if (currentMode === "file") {
-      imagePointLabel.textContent = image ? "Картинка карты загружена" : "Загрузите картинку карты";
+      imagePointLabel.textContent = activeLayer.map_image_url ? "Картинка карты загружена" : "Загрузите картинку карты";
       geoPointLabel.textContent = "Базовая карта";
       return;
     }
@@ -593,19 +787,39 @@
   }
 
   function normalizedCourseControls() {
-    return courseControls.map((control, index) => ({
-      index: index + 1,
-      label: courseControlLabel(index, courseControls.length),
-      kind: courseControlKind(index, courseControls.length),
-      pixel_x: control.pixel_x,
-      pixel_y: control.pixel_y,
-      lat: control.lat,
-      lon: control.lon,
-    }));
+    renumberCourseControls();
+    return courseControls.map(copyPoint);
   }
 
   function renumberCourseControls() {
-    courseControls = normalizedCourseControls();
+    const active = findMapLayer(activeLayerId);
+    if (active) {
+      active.course_controls = courseControls.map(copyPoint);
+    }
+
+    const flatControls = [];
+    for (const layer of mapLayers) {
+      const layerControls = parseExistingPoints(layer.course_controls);
+      layerControls.forEach((control, layerIndex) => {
+        flatControls.push({layer, control, layerIndex});
+      });
+    }
+
+    flatControls.forEach((item, globalIndex) => {
+      const normalized = {
+        index: globalIndex + 1,
+        label: courseControlLabel(globalIndex, flatControls.length),
+        kind: courseControlKind(globalIndex, flatControls.length),
+        map_layer_id: item.layer.id,
+        pixel_x: item.control.pixel_x,
+        pixel_y: item.control.pixel_y,
+        lat: item.control.lat,
+        lon: item.control.lon,
+      };
+      item.layer.course_controls[item.layerIndex] = normalized;
+    });
+
+    courseControls = parseExistingPoints(active?.course_controls);
   }
 
   function courseControlLabel(index, total) {
@@ -639,6 +853,10 @@
   }
 
   function routeSummaryText() {
+    if (mapLayers.length > 1) {
+      const total = mapLayers.reduce((sum, layer) => sum + parseExistingPoints(layer.course_controls).length, 0);
+      return `Маршрут: КП ${total}.`;
+    }
     if (isRogaine) {
       const total = courseControls.length;
       const intermediate = Math.max(total - (total > 1 ? 2 : 1), 0);
@@ -652,15 +870,21 @@
     if (!rawValue) {
       return [];
     }
+    if (Array.isArray(rawValue)) {
+      return rawValue.map(copyPoint);
+    }
     try {
       const parsed = JSON.parse(rawValue);
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed) ? parsed.map(copyPoint) : [];
     } catch (_error) {
       return [];
     }
   }
 
   function parseExistingObject(rawValue) {
+    if (rawValue && typeof rawValue === "object") {
+      return rawValue;
+    }
     if (!rawValue || rawValue === "null") {
       return null;
     }
@@ -669,6 +893,28 @@
     } catch (_error) {
       return null;
     }
+  }
+
+  function normalizeMapLayers(rawLayers) {
+    const layers = Array.isArray(rawLayers) && rawLayers.length
+      ? rawLayers
+      : [{id: "map-1", title: "Карта 1"}];
+    return layers.map((layer, index) => ({
+      id: layer.id || `map-${index + 1}`,
+      title: layer.title || `Карта ${index + 1}`,
+      image_path: layer.image_path || null,
+      image_filename: layer.image_filename || null,
+      map_image_url: layer.map_image_url || "",
+      georef_method: layer.georef_method || null,
+      georef_control_points: parseExistingPoints(layer.georef_control_points),
+      georef_transform: layer.georef_transform || null,
+      georef_residuals: Array.isArray(layer.georef_residuals) ? layer.georef_residuals : [],
+      course_controls: parseExistingPoints(layer.course_controls),
+    }));
+  }
+
+  function copyPoint(point) {
+    return {...point};
   }
 
   function formatPixel(point) {
@@ -736,5 +982,16 @@
 
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
+  }
+
+  function stopViewportGestures(node) {
+    if (!node) {
+      return;
+    }
+    ["pointerdown", "pointermove", "pointerup", "pointercancel", "wheel"].forEach((eventName) => {
+      node.addEventListener(eventName, (event) => {
+        event.stopPropagation();
+      });
+    });
   }
 })();

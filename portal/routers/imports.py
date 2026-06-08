@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from portal.db import (
+    add_import_draft_map_layer,
     clear_import_draft_track,
     connect_db,
     create_clone_import_draft,
@@ -58,6 +59,7 @@ class CourseControlPayload(BaseModel):
     pixel_y: float = Field(..., ge=0)
     lat: float = Field(..., ge=-90, le=90)
     lon: float = Field(..., ge=-180, le=180)
+    map_layer_id: str | None = None
 
 
 class SaveCourseControlsPayload(BaseModel):
@@ -279,10 +281,13 @@ async def update_training_import_details_from_form(
 @router.get("/trainings/imports/{draft_id}/map", response_class=HTMLResponse)
 async def import_map_page(draft_id: str, request: Request) -> HTMLResponse:
     draft = await _get_draft_or_404(draft_id)
+    draft_view = _draft_view_model(draft)
+    active_layer_id = request.query_params.get("layer")
+    draft_view["active_map_layer"] = _active_map_layer(draft_view, active_layer_id)
     return templates.TemplateResponse(
         request,
         "training_import_map.html",
-        {"draft": _draft_view_model(draft)},
+        {"draft": draft_view},
     )
 
 
@@ -296,6 +301,35 @@ async def import_track_page(draft_id: str, request: Request) -> HTMLResponse:
     )
 
 
+@router.post("/trainings/imports/{draft_id}/map-layers")
+async def add_import_map_layer_route(draft_id: str) -> RedirectResponse:
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        draft = await add_import_draft_map_layer(conn, draft_id)
+    finally:
+        await conn.close()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Import draft not found")
+    layer = draft["map_layers"][-1]
+    return RedirectResponse(
+        f"/trainings/imports/{draft_id}/map?layer={layer['id']}",
+        status_code=303,
+    )
+
+
+@router.post("/api/imports/{draft_id}/map-layers")
+async def add_import_map_layer_api(draft_id: str) -> dict:
+    conn = await connect_db(normalize_db_path(config.DB_PATH))
+    try:
+        draft = await add_import_draft_map_layer(conn, draft_id)
+    finally:
+        await conn.close()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Import draft not found")
+    draft_view = _draft_view_model(draft)
+    return {"draft": draft_view, "layer": draft_view["map_layers"][-1]}
+
+
 @router.get("/api/imports/{draft_id}")
 async def get_import_draft_api(draft_id: str) -> dict:
     draft = await _get_draft_or_404(draft_id)
@@ -304,6 +338,15 @@ async def get_import_draft_api(draft_id: str) -> dict:
 
 @router.post("/api/imports/{draft_id}/map-image")
 async def upload_import_map_image(draft_id: str, file: UploadFile = File(...)) -> dict:
+    return await upload_import_map_layer_image(draft_id, "map-1", file)
+
+
+@router.post("/api/imports/{draft_id}/map-layers/{layer_id}/map-image")
+async def upload_import_map_layer_image(
+    draft_id: str,
+    layer_id: str,
+    file: UploadFile = File(...),
+) -> dict:
     await _get_draft_or_404(draft_id)
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_MAP_SUFFIXES:
@@ -311,7 +354,7 @@ async def upload_import_map_image(draft_id: str, file: UploadFile = File(...)) -
 
     upload_dir = Path(config.UPLOAD_DIR).expanduser() / "imports" / draft_id
     upload_dir.mkdir(parents=True, exist_ok=True)
-    image_path = upload_dir / f"map{suffix}"
+    image_path = upload_dir / f"{layer_id}{suffix}"
 
     with image_path.open("wb") as output:
         while chunk := await file.read(1024 * 1024):
@@ -324,6 +367,7 @@ async def upload_import_map_image(draft_id: str, file: UploadFile = File(...)) -
             draft_id,
             image_path=str(image_path),
             filename=file.filename or image_path.name,
+            layer_id=layer_id,
         )
     finally:
         await conn.close()
@@ -334,8 +378,14 @@ async def upload_import_map_image(draft_id: str, file: UploadFile = File(...)) -
 
 @router.post("/api/imports/{draft_id}/georef")
 async def save_import_georef(draft_id: str, payload: SaveGeorefPayload) -> dict:
+    return await save_import_layer_georef(draft_id, "map-1", payload)
+
+
+@router.post("/api/imports/{draft_id}/map-layers/{layer_id}/georef")
+async def save_import_layer_georef(draft_id: str, layer_id: str, payload: SaveGeorefPayload) -> dict:
     draft = await _get_draft_or_404(draft_id)
-    if not draft.get("map_image_path"):
+    layer = _active_map_layer(_draft_view_model(draft), layer_id)
+    if not layer.get("image_path"):
         raise HTTPException(status_code=409, detail="Upload a map image before georeferencing")
 
     points = [
@@ -357,6 +407,7 @@ async def save_import_georef(draft_id: str, payload: SaveGeorefPayload) -> dict:
             control_points=[_model_to_dict(point) for point in payload.control_points],
             transform=transform.to_dict(),
             residuals=residuals,
+            layer_id=layer_id,
         )
     finally:
         await conn.close()
@@ -373,14 +424,29 @@ async def save_import_georef(draft_id: str, payload: SaveGeorefPayload) -> dict:
 
 @router.post("/api/imports/{draft_id}/course-controls")
 async def save_import_course_controls(draft_id: str, payload: SaveCourseControlsPayload) -> dict:
+    return await save_import_layer_course_controls(draft_id, "map-1", payload)
+
+
+@router.post("/api/imports/{draft_id}/map-layers/{layer_id}/course-controls")
+async def save_import_layer_course_controls(
+    draft_id: str,
+    layer_id: str,
+    payload: SaveCourseControlsPayload,
+) -> dict:
     draft = await _get_draft_or_404(draft_id)
-    if not draft.get("georef_transform"):
+    layer = _active_map_layer(_draft_view_model(draft), layer_id)
+    if not layer.get("georef_transform"):
         raise HTTPException(status_code=409, detail="Save map georeferencing before adding controls")
 
-    controls = [_model_to_dict(control) for control in payload.controls]
+    controls = [{**_model_to_dict(control), "map_layer_id": layer_id} for control in payload.controls]
     conn = await connect_db(normalize_db_path(config.DB_PATH))
     try:
-        updated = await set_import_draft_course_controls(conn, draft_id, controls=controls)
+        updated = await set_import_draft_course_controls(
+            conn,
+            draft_id,
+            controls=controls,
+            layer_id=layer_id,
+        )
     finally:
         await conn.close()
     if updated is None:
@@ -391,7 +457,7 @@ async def save_import_course_controls(draft_id: str, payload: SaveCourseControls
 @router.post("/api/imports/{draft_id}/track-gpx")
 async def upload_import_track_gpx(draft_id: str, file: UploadFile = File(...)) -> dict:
     draft = await _get_draft_or_404(draft_id)
-    if not draft.get("georef_transform"):
+    if not any(layer.get("georef_transform") for layer in draft.get("map_layers") or []):
         raise HTTPException(status_code=409, detail="Save map georeferencing before uploading a track")
 
     suffix = Path(file.filename or "").suffix.lower()
@@ -499,7 +565,7 @@ async def delete_training_route(training_id: str) -> RedirectResponse:
 @router.post("/trainings/imports/{draft_id}/finish")
 async def finish_training_import(draft_id: str) -> RedirectResponse:
     draft = await _get_draft_or_404(draft_id)
-    if not draft.get("georef_transform"):
+    if not any(layer.get("georef_transform") for layer in draft.get("map_layers") or []):
         raise HTTPException(status_code=409, detail="Save map georeferencing before finishing import")
 
     conn = await connect_db(normalize_db_path(config.DB_PATH))
@@ -549,6 +615,7 @@ async def _resolve_subject_user_id(
 def _draft_view_model(draft: dict) -> dict:
     payload = dict(draft)
     payload["map_image_url"] = media.map_image_url(draft.get("map_image_path"))
+    payload["map_layers"] = _map_layers_view_model(draft.get("map_layers") or [])
     return payload
 
 
@@ -562,7 +629,26 @@ def _normalize_discipline(value: str) -> str:
 def _training_view_model(training: dict) -> dict:
     payload = dict(training)
     payload["map_image_url"] = media.map_image_url(training.get("map_image_path"))
+    payload["map_layers"] = _map_layers_view_model(training.get("map_layers") or [])
     return payload
+
+
+def _map_layers_view_model(layers: list[dict]) -> list[dict]:
+    result = []
+    for layer in layers:
+        item = dict(layer)
+        item["map_image_url"] = media.map_image_url(layer.get("image_path"))
+        result.append(item)
+    return result
+
+
+def _active_map_layer(draft: dict, layer_id: str | None) -> dict:
+    layers = draft.get("map_layers") or []
+    if layer_id:
+        for layer in layers:
+            if layer.get("id") == layer_id:
+                return layer
+    return layers[0] if layers else {"id": "map-1", "title": "Карта 1"}
 
 
 def _race_result_split_gaps(race_result: dict | None) -> dict[str, dict[str, str]]:

@@ -10,21 +10,31 @@
   const status = document.querySelector("#track-status");
   const image = document.querySelector("#track-map-image");
   const svg = document.querySelector("#track-image-svg");
+  const emptyStage = document.querySelector("#track-empty-stage");
   const viewport = document.querySelector("#track-image-viewport");
   const content = document.querySelector("#track-image-content");
   const splitsStatus = document.querySelector("#track-splits-status");
+  const layerTabsContainer = document.querySelector("#track-map-layer-tabs");
+  const layerTabs = Array.from(document.querySelectorAll("#track-map-layer-tabs .map-layer-tab"));
 
-  const transform = parseJson(workspace.dataset.transform, null);
+  const mapLayers = normalizeMapLayers(parseJson(workspace.dataset.mapLayers, []));
+  let activeLayerId = mapLayers[0]?.id || "map-1";
+  let activeLayer = mapLayers.find((layer) => layer.id === activeLayerId) || mapLayers[0] || null;
+  let transform = activeLayer?.georef_transform || null;
   const splitsEngine = window.OrienteeringSplits || createFallbackSplitsEngine();
-  const courseControls = splitsEngine.normalizeCourseControls(
-    parseJson(workspace.dataset.courseControls, []),
-    {trainingType}
-  );
+  let courseControls = normalizeAllCourseControls();
   let trackPoints = normalizeTrackPoints(parseJson(workspace.dataset.trackPoints, []));
   let view = {scale: 1, translateX: 0, translateY: 0};
   let drag = null;
   let splitDrag = null;
   let persistTimer = null;
+
+  layerTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      setActiveLayer(tab.dataset.layerId || "map-1");
+    });
+  });
+  stopViewportGestures(layerTabsContainer);
 
   uploadForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -103,12 +113,36 @@
   svg?.addEventListener("pointerup", finishSplitMarkerDrag);
   svg?.addEventListener("pointercancel", finishSplitMarkerDrag);
 
-  if (trackPoints.length && !hasSplitMarkers()) {
+  if (trackPoints.length && !hasCompleteSplitMarkers()) {
     autoAnnotateSplitMarkers();
     saveDraftTrackPointsNow();
   }
 
+  setActiveLayer(activeLayerId);
   drawAll();
+
+  function setActiveLayer(layerId) {
+    const nextLayer = mapLayers.find((layer) => layer.id === layerId);
+    if (!nextLayer) {
+      return;
+    }
+    activeLayerId = nextLayer.id;
+    activeLayer = nextLayer;
+    transform = activeLayer.georef_transform || null;
+    trackPoints = normalizeTrackPoints(trackPoints);
+    layerTabs.forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.layerId === activeLayerId);
+    });
+    if (image) {
+      image.src = activeLayer.map_image_url || "";
+      image.hidden = !activeLayer.map_image_url;
+    }
+    if (emptyStage) {
+      emptyStage.hidden = Boolean(activeLayer.map_image_url);
+    }
+    fitImageToViewport();
+    drawAll();
+  }
 
   function drawAll() {
     drawImageTrack();
@@ -128,19 +162,21 @@
     svg.setAttribute("viewBox", `0 0 ${image.naturalWidth} ${image.naturalHeight}`);
     svg.innerHTML = "";
 
-    if (courseControls.length >= 2) {
+    const visibleCourseControls = activeCourseControls();
+    if (visibleCourseControls.length >= 2) {
       addPolyline(
-        courseControls.map((control) => ({pixel_x: control.pixel_x, pixel_y: control.pixel_y})),
+        visibleCourseControls.map((control) => ({pixel_x: control.pixel_x, pixel_y: control.pixel_y})),
         "course-line"
       );
     }
 
-    courseControls.forEach((control) => {
+    visibleCourseControls.forEach((control) => {
       addControlMarker(control);
     });
 
-    if (trackPoints.length) {
-      addPolyline(trackPoints.map((point) => point.pixel), "track-line");
+    const visibleTrackPoints = activeLayerTrackPoints();
+    if (visibleTrackPoints.length) {
+      addPolyline(visibleTrackPoints.map((point) => point.pixel), "track-line");
       addSplitMarkers();
     }
   }
@@ -181,7 +217,7 @@
   }
 
   function addSplitMarkers() {
-    getSplitMarkers().forEach((marker) => {
+    getSplitMarkers().filter((marker) => marker.control.map_layer_id === activeLayerId).forEach((marker) => {
       const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
       group.setAttribute("class", "split-cut-marker");
       group.setAttribute("transform", `translate(${marker.point.pixel.pixel_x} ${marker.point.pixel.pixel_y})`);
@@ -256,6 +292,14 @@
 
   function autoAnnotateSplitMarkers() {
     clearSplitMarkerAnnotations();
+    const layerMarkers = calculateLayerSplitMarkers();
+    if (layerMarkers.length) {
+      layerMarkers.forEach((marker) => {
+        annotateSplitMarker(marker.trackIndex, marker.control, marker.order);
+      });
+      return;
+    }
+
     const rows = splitsEngine.calculateSplits(courseControls, trackPoints);
     if (!rows.length) {
       return;
@@ -266,6 +310,65 @@
     rows.forEach((row) => {
       annotateSplitMarker(row.toTrackIndex, row.toControl, splitControls.indexOf(row.toControl));
     });
+  }
+
+  function calculateLayerSplitMarkers() {
+    const layerControlGroups = mapLayers
+      .map((layer) => ({
+        layer,
+        controls: courseControls.filter((control) => control.map_layer_id === layer.id && control.kind !== "start-point"),
+      }))
+      .filter((group) => group.controls.length);
+    if (layerControlGroups.length <= 1 || !trackPoints.length) {
+      return [];
+    }
+
+    const starts = [];
+    let previousStart = 0;
+    for (const group of layerControlGroups) {
+      const firstControl = group.controls[0];
+      const match = findClosestTrackPoint(firstControl, previousStart, trackPoints.length);
+      if (match === null) {
+        return [];
+      }
+      starts.push(match);
+      previousStart = Math.min(match + 1, trackPoints.length - 1);
+    }
+
+    const splitControls = courseControls.filter((control) => control.kind !== "start-point");
+    const markers = [];
+    for (let groupIndex = 0; groupIndex < layerControlGroups.length; groupIndex += 1) {
+      const group = layerControlGroups[groupIndex];
+      const endIndex = groupIndex + 1 < starts.length ? starts[groupIndex + 1] : trackPoints.length;
+      let searchStart = starts[groupIndex];
+      for (const control of group.controls) {
+        const match = findClosestTrackPoint(control, searchStart, endIndex);
+        if (match === null) {
+          return [];
+        }
+        markers.push({
+          trackIndex: match,
+          control,
+          order: splitControls.indexOf(control),
+        });
+        searchStart = Math.min(match + 1, trackPoints.length - 1);
+      }
+    }
+    return markers.filter((marker) => marker.order >= 0);
+  }
+
+  function findClosestTrackPoint(control, startIndex, endIndex) {
+    let best = null;
+    const start = clamp(Math.floor(startIndex), 0, trackPoints.length - 1);
+    const end = clamp(Math.ceil(endIndex), start + 1, trackPoints.length);
+    for (let index = start; index < end; index += 1) {
+      const point = trackPoints[index];
+      const distanceMeters = haversineMeters(point, control);
+      if (!best || distanceMeters < best.distanceMeters) {
+        best = {index, distanceMeters};
+      }
+    }
+    return best ? best.index : null;
   }
 
   function annotateSplitMarker(trackIndex, control, order) {
@@ -322,6 +425,16 @@
     return trackPoints.some((point) => Number.isFinite(Number(point.split_control_order)));
   }
 
+  function hasCompleteSplitMarkers() {
+    const expectedCount = courseControls.filter((control) => control.kind !== "start-point").length;
+    const orders = new Set(
+      trackPoints
+        .map((point) => Number(point.split_control_order))
+        .filter((order) => Number.isFinite(order))
+    );
+    return expectedCount > 0 && orders.size >= expectedCount;
+  }
+
   function splitMarkerLimits(order) {
     const markers = getSplitMarkers();
     const previous = markers.filter((marker) => marker.order < order).at(-1);
@@ -363,7 +476,7 @@
       splitsStatus.textContent = "Не удалось автоматически нарезать трек: проверьте КП и GPX.";
       return;
     }
-    splitsStatus.textContent = `Нарезка: ${rows.length} отрезков, ${markers.length} точек на треке. Перетащите точку вдоль синего трека, чтобы поправить КП.`;
+    splitsStatus.textContent = `Нарезка: ${rows.length} отрезков, ${markers.length} точек на треке. Активный слой: ${activeLayer?.title || "карта"}.`;
   }
 
   async function persistDraftTrackPoints(delayMs) {
@@ -392,6 +505,42 @@
     }));
   }
 
+  function normalizeMapLayers(layers) {
+    if (!Array.isArray(layers) || !layers.length) {
+      return [{id: "map-1", title: "Карта 1", course_controls: []}];
+    }
+    return layers.map((layer, index) => ({
+      ...layer,
+      id: layer.id || `map-${index + 1}`,
+      title: layer.title || `Карта ${index + 1}`,
+      course_controls: Array.isArray(layer.course_controls) ? layer.course_controls : [],
+    }));
+  }
+
+  function normalizeAllCourseControls() {
+    const controls = [];
+    mapLayers.forEach((layer) => {
+      layer.course_controls.forEach((control) => {
+        controls.push({...control, map_layer_id: control.map_layer_id || layer.id});
+      });
+    });
+    return splitsEngine.normalizeCourseControls(controls, {trainingType});
+  }
+
+  function activeCourseControls() {
+    return courseControls.filter((control) => control.map_layer_id === activeLayerId);
+  }
+
+  function activeLayerTrackPoints() {
+    const markers = getSplitMarkers().filter((marker) => marker.control.map_layer_id === activeLayerId);
+    if (!markers.length) {
+      return trackPoints;
+    }
+    const min = Math.max(Math.min(...markers.map((marker) => marker.trackIndex)) - 1, 0);
+    const max = Math.min(Math.max(...markers.map((marker) => marker.trackIndex)) + 1, trackPoints.length - 1);
+    return trackPoints.slice(min, max + 1);
+  }
+
   function serializedTrackPoint(point) {
     const payload = {
       lat: point.lat,
@@ -418,8 +567,8 @@
         return controls.map((control, index) => ({
           ...control,
           index: index + 1,
-          label: fallbackCourseControlLabel(index, controls.length, rogaine),
-          kind: fallbackCourseControlKind(index, controls.length, rogaine),
+          label: control.label || fallbackCourseControlLabel(index, controls.length, rogaine),
+          kind: control.kind || fallbackCourseControlKind(index, controls.length, rogaine),
         }));
       },
       calculateSplits(controls, points) {
@@ -587,6 +736,22 @@
     };
   }
 
+  function haversineMeters(a, b) {
+    const radius = 6371000;
+    const lat1 = toRadians(a.lat);
+    const lat2 = toRadians(b.lat);
+    const deltaLat = toRadians(b.lat - a.lat);
+    const deltaLon = toRadians(b.lon - a.lon);
+    const value =
+      Math.sin(deltaLat / 2) ** 2 +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+    return radius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+  }
+
+  function toRadians(value) {
+    return value * Math.PI / 180;
+  }
+
   function parseJson(rawValue, fallback) {
     if (!rawValue || rawValue === "null") {
       return fallback;
@@ -600,5 +765,16 @@
 
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
+  }
+
+  function stopViewportGestures(node) {
+    if (!node) {
+      return;
+    }
+    ["pointerdown", "pointermove", "pointerup", "pointercancel", "wheel"].forEach((eventName) => {
+      node.addEventListener(eventName, (event) => {
+        event.stopPropagation();
+      });
+    });
   }
 })();

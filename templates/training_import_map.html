@@ -24,11 +24,9 @@
         id="georef-workspace"
         class="georef-workspace"
         data-draft-id="{{ draft.draft_id }}"
+        data-active-layer-id="{{ draft.active_map_layer.id }}"
         data-training-type="{{ draft.training_type or '' }}"
-        data-image-url="{{ draft.map_image_url or '' }}"
-        data-existing-points='{{ draft.georef_control_points | tojson }}'
-        data-existing-transform='{{ draft.georef_transform | tojson }}'
-        data-existing-course-controls='{{ draft.course_controls | tojson }}'
+        data-map-layers='{{ draft.map_layers | tojson }}'
       >
         <div class="map-pane panel">
           <div class="pane-header">
@@ -37,13 +35,22 @@
           </div>
           <div class="image-stage">
             <div id="image-viewport" class="image-viewport">
+              <nav class="map-layer-tabs image-layer-tabs" aria-label="Карты тренировки">
+                {% for layer in draft.map_layers %}
+                  <button
+                    class="map-layer-tab {% if layer.id == draft.active_map_layer.id %}active{% endif %}"
+                    type="button"
+                    data-layer-id="{{ layer.id }}"
+                  >{{ layer.title }}</button>
+                {% endfor %}
+                <form id="add-map-layer-form" method="post" action="/trainings/imports/{{ draft.draft_id }}/map-layers">
+                  <button class="button compact" type="submit">Добавить карту</button>
+                </form>
+              </nav>
               <div id="image-content" class="image-content">
-                {% if draft.map_image_url %}
-                  <img id="map-image" src="{{ draft.map_image_url }}" alt="Карта тренировки">
-                {% else %}
-                  <div class="empty-stage">Загрузите картинку карты</div>
-                {% endif %}
+                <img id="map-image" src="{{ draft.active_map_layer.map_image_url or '' }}" alt="Карта тренировки" {% if not draft.active_map_layer.map_image_url %}hidden{% endif %}>
               </div>
+              <div id="map-empty-stage" class="empty-stage image-empty-stage" {% if draft.active_map_layer.map_image_url %}hidden{% endif %}>Загрузите картинку карты</div>
             </div>
           </div>
         </div>
@@ -58,19 +65,19 @@
 
         <aside class="panel point-sidebar">
           <div class="mode-tabs" role="tablist" aria-label="Режим работы">
-            <button class="mode-tab {% if not draft.map_image_url %}active{% endif %}" type="button" data-mode="file">Файл</button>
-            <button class="mode-tab {% if draft.map_image_url %}active{% endif %}" type="button" data-mode="georef">Привязка</button>
+            <button class="mode-tab {% if not draft.active_map_layer.map_image_url %}active{% endif %}" type="button" data-mode="file">Файл</button>
+            <button class="mode-tab {% if draft.active_map_layer.map_image_url %}active{% endif %}" type="button" data-mode="georef">Привязка</button>
             <button class="mode-tab" type="button" data-mode="course">КП</button>
           </div>
 
-          <div class="mode-panel {% if not draft.map_image_url %}active{% endif %}" data-panel="file">
+          <div class="mode-panel {% if not draft.active_map_layer.map_image_url %}active{% endif %}" data-panel="file">
             <h2>Файл карты</h2>
             <form id="map-upload-form" class="file-upload-form">
               <input name="file" type="file" accept="image/png,image/jpeg,image/webp" required>
               <button class="button" type="submit">Загрузить карту</button>
             </form>
             <div id="map-upload-status" class="georef-result muted">
-              {% if draft.map_image_url %}
+              {% if draft.active_map_layer.map_image_url %}
                 Картинка карты загружена.
               {% else %}
                 Загрузите jpg, png или webp.
@@ -78,7 +85,7 @@
             </div>
           </div>
 
-          <div class="mode-panel {% if draft.map_image_url %}active{% endif %}" data-panel="georef">
+          <div class="mode-panel {% if draft.active_map_layer.map_image_url %}active{% endif %}" data-panel="georef">
             <h2>Контрольные точки</h2>
             <ol id="control-point-list" class="point-list"></ol>
             <div id="georef-result" class="georef-result muted">Нужно минимум 3 точки.</div>
@@ -95,7 +102,7 @@
             <input id="overlay-opacity" type="range" min="0" max="100" value="55">
           </label>
 
-          <div class="actions mode-actions {% if draft.map_image_url %}active{% endif %}" data-actions="georef">
+          <div class="actions mode-actions {% if draft.active_map_layer.map_image_url %}active{% endif %}" data-actions="georef">
             <button id="undo-point" class="button" type="button">Убрать последнюю</button>
             <button id="save-georef" class="button primary" type="button">Сохранить привязку</button>
           </div>

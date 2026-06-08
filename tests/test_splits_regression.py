@@ -68,6 +68,40 @@ console.log(JSON.stringify({
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for JS split tests")
+def test_normalize_course_controls_preserves_explicit_multi_map_labels() -> None:
+    script = """
+const splits = require("./static/splits.js");
+const labels = ["С", "К", ...Array.from({length: 20}, (_, index) => String(index + 1)), "Ф"];
+const controls = labels.map((label, index) => ({
+  pixel_x: index * 10,
+  pixel_y: 0,
+  lat: 60,
+  lon: 30 + index * 0.001,
+  label,
+  kind: index === 0 ? "start" : index === 1 ? "start-point" : index === labels.length - 1 ? "finish" : "control",
+  map_layer_id: index < 11 ? "map-1" : "map-2",
+}));
+const normalized = splits.normalizeCourseControls(controls);
+console.log(JSON.stringify({
+  labels: normalized.map((control) => control.label),
+  kinds: normalized.map((control) => control.kind),
+}));
+"""
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT_DIR,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    actual = json.loads(result.stdout)
+
+    assert actual["labels"] == ["С", "К", *[str(index) for index in range(1, 21)], "Ф"]
+    assert actual["kinds"] == ["start", "start-point", *["control"] * 20, "finish"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for JS split tests")
 def test_calculate_splits_prefers_manual_track_markers() -> None:
     script = """
 const splits = require("./static/splits.js");

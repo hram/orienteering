@@ -39,9 +39,7 @@
         class="track-workspace"
         data-draft-id="{{ draft.draft_id }}"
         data-training-type="{{ draft.training_type or '' }}"
-        data-image-url="{{ draft.map_image_url or '' }}"
-        data-transform='{{ draft.georef_transform | tojson }}'
-        data-course-controls='{{ draft.course_controls | tojson }}'
+        data-map-layers='{{ draft.map_layers | tojson }}'
         data-track-points='{{ draft.track_points | tojson }}'
       >
         <div class="map-pane panel">
@@ -52,14 +50,22 @@
           <p id="track-splits-status" class="muted track-splits-status">После загрузки GPX здесь появятся точки нарезки по КП.</p>
           <div class="track-image-stage">
             <div id="track-image-viewport" class="track-image-viewport">
+              {% if draft.map_layers|length > 1 %}
+                <nav id="track-map-layer-tabs" class="map-layer-tabs image-layer-tabs" aria-label="Карты тренировки">
+                  {% for layer in draft.map_layers %}
+                    <button
+                      class="map-layer-tab {% if loop.first %}active{% endif %}"
+                      type="button"
+                      data-layer-id="{{ layer.id }}"
+                    >{{ layer.title }}</button>
+                  {% endfor %}
+                </nav>
+              {% endif %}
               <div id="track-image-content" class="track-image-content">
-                {% if draft.map_image_url %}
-                  <img id="track-map-image" src="{{ draft.map_image_url }}" alt="Карта тренировки">
-                  <svg id="track-image-svg" class="track-image-svg"></svg>
-                {% else %}
-                  <div class="empty-stage">Нет картинки карты</div>
-                {% endif %}
+                <img id="track-map-image" src="{{ draft.map_layers[0].map_image_url or '' }}" alt="Карта тренировки">
+                <svg id="track-image-svg" class="track-image-svg"></svg>
               </div>
+              <div id="track-empty-stage" class="empty-stage image-empty-stage" {% if draft.map_layers[0].map_image_url %}hidden{% endif %}>Нет картинки карты</div>
             </div>
           </div>
         </div>

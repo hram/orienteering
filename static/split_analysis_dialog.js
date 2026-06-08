@@ -45,7 +45,9 @@
   let reasonsLoaded = false;
   let reviewSaveTimer = null;
   let reviewRequestId = 0;
+  let activationRequestId = 0;
   let videoExporting = false;
+  const layerImageCache = new Map();
 
   closeButton?.addEventListener("click", close);
   previousButton?.addEventListener("click", () => navigateSplit(-1));
@@ -121,11 +123,14 @@
   svg?.addEventListener("pointerup", onSvgPointerUp);
   svg?.addEventListener("pointercancel", onSvgPointerUp);
 
-  function open(options) {
-    if (!options?.row || !options?.image || !svg) {
+  async function open(options) {
+    if (!options?.row || !svg) {
       return;
     }
-    if (!options.image.complete || !options.image.naturalWidth || !options.image.naturalHeight) {
+    if (!hasMapLayerImage(options) && !options?.image) {
+      return;
+    }
+    if (!hasMapLayerImage(options) && (!options.image.complete || !options.image.naturalWidth || !options.image.naturalHeight)) {
       options.image.addEventListener("load", () => open(options), {once: true});
       return;
     }
@@ -135,16 +140,24 @@
       row: options.row,
       rows: Array.isArray(options.rows) && options.rows.length ? options.rows : [options.row],
       rowIndex: Number.isInteger(options.rowIndex) ? options.rowIndex : 0,
-      image: options.image,
+      image: options.image || null,
+      fallbackImage: options.image || null,
+      sourceTrackPoints: options.trackPoints || [],
       trackPoints: options.trackPoints || [],
       transform: options.transform || null,
+      fallbackTransform: options.transform || null,
+      mapLayers: normalizeMapLayers(options.mapLayers),
+      mapLayerId: null,
     };
     if (!active.rows[active.rowIndex] || active.rows[active.rowIndex] !== active.row) {
       const index = active.rows.indexOf(active.row);
       active.rowIndex = index >= 0 ? index : 0;
       active.row = active.rows[active.rowIndex] || active.row;
     }
-    activateCurrentSplit();
+    await activateCurrentSplit();
+    if (!active) {
+      return;
+    }
     modal.hidden = false;
     document.body.classList.add("modal-open");
     chatStartButton?.focus();
@@ -158,6 +171,7 @@
       reviewSaveTimer = null;
     }
     reviewRequestId += 1;
+    activationRequestId += 1;
     videoExporting = false;
     active = null;
     athleteMarker = null;
@@ -190,15 +204,20 @@
     activateCurrentSplit();
   }
 
-  function activateCurrentSplit() {
+  async function activateCurrentSplit() {
     if (!active) {
       return;
     }
+    const requestId = ++activationRequestId;
     analysisSeconds = 0;
     altRoutePoints = [];
     drawMode = false;
     drawPointerId = null;
     svg?.classList.remove("is-drawing");
+    await prepareActiveSplitLayer(active.row);
+    if (!active || requestId !== activationRequestId) {
+      return;
+    }
     updateTitle();
     resetChat(active.row);
     renderMap();
@@ -224,6 +243,92 @@
     if (nextButton) {
       nextButton.disabled = !active || active.rowIndex >= count - 1;
     }
+  }
+
+  function hasMapLayerImage(options) {
+    return Array.isArray(options?.mapLayers) && options.mapLayers.some((layer) => layer?.map_image_url);
+  }
+
+  function normalizeMapLayers(layers) {
+    if (!Array.isArray(layers)) {
+      return [];
+    }
+    return layers
+      .filter((layer) => layer && typeof layer === "object")
+      .map((layer, index) => ({
+        ...layer,
+        id: layer.id || `map-${index + 1}`,
+        georef_transform: layer.georef_transform || null,
+      }));
+  }
+
+  async function prepareActiveSplitLayer(row) {
+    if (!active) {
+      return;
+    }
+    const layer = splitMapLayer(row);
+    const image = await imageForLayer(layer, active.fallbackImage);
+    active.mapLayerId = layer?.id || null;
+    active.image = image;
+    active.transform = layer?.georef_transform || active.fallbackTransform || null;
+    active.trackPoints = projectTrackPoints(active.sourceTrackPoints, active.transform);
+  }
+
+  function splitMapLayer(row) {
+    if (!active?.mapLayers?.length) {
+      return null;
+    }
+    const preferredLayerId =
+      row?.toControl?.map_layer_id ||
+      row?.viaControls?.find((control) => control?.map_layer_id)?.map_layer_id ||
+      row?.fromControl?.map_layer_id ||
+      null;
+    return active.mapLayers.find((layer) => layer.id === preferredLayerId)
+      || active.mapLayers.find((layer) => layer.map_image_url)
+      || active.mapLayers[0]
+      || null;
+  }
+
+  async function imageForLayer(layer, fallbackImage) {
+    if (layer?.map_image_url) {
+      const cacheKey = `${layer.id || ""}:${layer.map_image_url}`;
+      if (!layerImageCache.has(cacheKey)) {
+        layerImageCache.set(cacheKey, loadImage(layer.map_image_url));
+      }
+      return await layerImageCache.get(cacheKey);
+    }
+    if (!fallbackImage) {
+      return null;
+    }
+    if (!fallbackImage.complete || !fallbackImage.naturalWidth || !fallbackImage.naturalHeight) {
+      await new Promise((resolve) => fallbackImage.addEventListener("load", resolve, {once: true}));
+    }
+    return fallbackImage;
+  }
+
+  function projectTrackPoints(points, transform) {
+    if (!Array.isArray(points)) {
+      return [];
+    }
+    return points.map((point) => ({
+      ...point,
+      pixel: transform && Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lon))
+        ? geoToPixel(point, transform)
+        : point.pixel || {pixel_x: 0, pixel_y: 0},
+    }));
+  }
+
+  function geoToPixel(point, transform) {
+    const determinant = transform.lon_a * transform.lat_b - transform.lon_b * transform.lat_a;
+    if (Math.abs(determinant) < 1e-12) {
+      return {pixel_x: 0, pixel_y: 0};
+    }
+    const lon = point.lon - transform.lon_c;
+    const lat = point.lat - transform.lat_c;
+    return {
+      pixel_x: (lon * transform.lat_b - transform.lon_b * lat) / determinant,
+      pixel_y: (transform.lon_a * lat - lon * transform.lat_a) / determinant,
+    };
   }
 
   async function ensureErrorReasons() {
@@ -416,7 +521,7 @@
   function renderMap() {
     const row = active.row;
     const image = active.image;
-    const coursePoints = [row.fromControl, ...row.viaControls, row.toControl];
+    const coursePoints = splitCoursePoints(row);
     const trackSegment = splitTrackSegment(row);
     const focusPoints = [
       ...coursePoints.map(controlPixel),
@@ -1211,8 +1316,12 @@
   }
 
   function splitProjection(row) {
-    const from = controlPixel(row.fromControl);
-    const to = controlPixel(row.toControl);
+    const coursePoints = splitCoursePoints(row);
+    if (coursePoints.length < 2) {
+      return null;
+    }
+    const from = controlPixel(coursePoints[0]);
+    const to = controlPixel(coursePoints[coursePoints.length - 1]);
     const dx = to.pixel_x - from.pixel_x;
     const dy = to.pixel_y - from.pixel_y;
     const length = Math.hypot(dx, dy);
@@ -1281,6 +1390,16 @@
 
   function controlPixel(control) {
     return {pixel_x: control.pixel_x, pixel_y: control.pixel_y};
+  }
+
+  function splitCoursePoints(row) {
+    const points = [row.fromControl, ...(Array.isArray(row.viaControls) ? row.viaControls : []), row.toControl]
+      .filter(Boolean);
+    if (!active?.mapLayerId) {
+      return points;
+    }
+    const layerPoints = points.filter((control) => (control.map_layer_id || active.mapLayerId) === active.mapLayerId);
+    return layerPoints.length ? layerPoints : points;
   }
 
   function createPaceGradient(chart, alpha) {
@@ -1464,7 +1583,10 @@
     if (!active || !active.transform) {
       return null;
     }
-    const points = [active.row.fromControl, ...active.row.viaControls, active.row.toControl];
+    const points = splitCoursePoints(active.row);
+    if (points.length < 2) {
+      return null;
+    }
     let meters = 0;
     for (let index = 1; index < points.length; index += 1) {
       const a = pixelToGeo(points[index - 1]);

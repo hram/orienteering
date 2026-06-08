@@ -4,8 +4,8 @@
     return controls.map((control, index) => ({
       ...control,
       index: index + 1,
-      label: courseControlLabel(index, controls.length, isRogaine),
-      kind: courseControlKind(index, controls.length, isRogaine),
+      label: control.label || courseControlLabel(index, controls.length, isRogaine),
+      kind: control.kind || courseControlKind(index, controls.length, isRogaine),
     }));
   }
 

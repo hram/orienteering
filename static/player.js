@@ -6,6 +6,7 @@
 
   const image = document.querySelector("#player-map-image");
   const svg = document.querySelector("#player-svg");
+  const emptyStage = document.querySelector("#player-empty-stage");
   const viewport = document.querySelector("#player-image-viewport");
   const content = document.querySelector("#player-image-content");
   const toggleButton = document.querySelector("#player-toggle");
@@ -24,15 +25,17 @@
   const splitsStatus = document.querySelector("#splits-status");
   const splitsTableBody = document.querySelector("#splits-table-body");
   const splitProblemsOnly = document.querySelector("#split-problems-only");
+  const layerTabsContainer = document.querySelector("#player-map-layer-tabs");
+  const layerTabs = Array.from(document.querySelectorAll("#player-map-layer-tabs .map-layer-tab"));
 
   const trainingId = workspace.dataset.trainingId;
   const trainingType = workspace.dataset.trainingType || "";
-  const transform = parseJson(workspace.dataset.transform, null);
+  const mapLayers = normalizeMapLayers(parseJson(workspace.dataset.mapLayers, []));
+  let activeLayerId = mapLayers[0]?.id || "map-1";
+  let activeLayer = mapLayers.find((layer) => layer.id === activeLayerId) || mapLayers[0] || null;
+  let transform = activeLayer?.georef_transform || null;
   const splitsEngine = window.OrienteeringSplits;
-  const courseControls = splitsEngine.normalizeCourseControls(
-    parseJson(workspace.dataset.courseControls, []),
-    {trainingType}
-  );
+  const courseControls = normalizeAllCourseControls();
   const hasRaceResult = workspace.dataset.hasRaceResult === "true";
   const raceResultSplitGaps = parseJson(workspace.dataset.raceResultSplitGaps, {}) || {};
   const splitsColumnCount = hasRaceResult ? 7 : 6;
@@ -55,6 +58,13 @@
 
   let durationSeconds = calculateDurationSeconds();
   let paceSeries = calculatePaceSeries();
+
+  layerTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      setActiveLayer(tab.dataset.layerId || "map-1");
+    });
+  });
+  stopViewportGestures(layerTabsContainer);
 
   toggleButton?.addEventListener("click", () => {
     playing = !playing;
@@ -171,6 +181,7 @@
     renderSplitsTable();
   });
 
+  setActiveLayer(activeLayerId);
   drawStaticLayers();
   drawPaceChart();
   renderSplitsTable();
@@ -208,22 +219,52 @@
     svg.setAttribute("viewBox", `0 0 ${image.naturalWidth} ${image.naturalHeight}`);
     svg.innerHTML = "";
 
-    if (courseControls.length >= 2) {
+    const visibleCourseControls = activeCourseControls();
+    if (visibleCourseControls.length >= 2) {
       addPolyline(
-        courseControls.map((control) => ({pixel_x: control.pixel_x, pixel_y: control.pixel_y})),
+        visibleCourseControls.map((control) => ({pixel_x: control.pixel_x, pixel_y: control.pixel_y})),
         "course-line"
       );
     }
-    courseControls.forEach(addControlMarker);
+    visibleCourseControls.forEach(addControlMarker);
 
-    if (trackPoints.length >= 2) {
-      addPolyline(trackPoints.map((point) => point.pixel), "track-line");
+    const visibleTrackPoints = activeLayerTrackPoints();
+    if (visibleTrackPoints.length >= 2) {
+      addPolyline(visibleTrackPoints.map((point) => point.pixel), "track-line");
     }
 
     athleteMarker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     athleteMarker.setAttribute("class", "athlete-marker");
     athleteMarker.setAttribute("r", "9");
     svg.appendChild(athleteMarker);
+  }
+
+  function setActiveLayer(layerId) {
+    const nextLayer = mapLayers.find((layer) => layer.id === layerId);
+    if (!nextLayer) {
+      return;
+    }
+    activeLayerId = nextLayer.id;
+    activeLayer = nextLayer;
+    transform = activeLayer.georef_transform || null;
+    trackPoints = trackPoints.map((point, index) => ({
+      ...point,
+      pixel: transform ? geoToPixel(point) : {pixel_x: 0, pixel_y: 0},
+      seconds: splitsEngine.parsePointSeconds(point, index),
+    }));
+    layerTabs.forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.layerId === activeLayerId);
+    });
+    if (image) {
+      image.src = activeLayer.map_image_url || "";
+      image.hidden = !activeLayer.map_image_url;
+    }
+    if (emptyStage) {
+      emptyStage.hidden = Boolean(activeLayer.map_image_url);
+    }
+    fitImageToViewport();
+    drawStaticLayers();
+    updateAthlete();
   }
 
   function updateAthlete() {
@@ -825,6 +866,7 @@
       rows,
       rowIndex: Math.max(rows.indexOf(row), 0),
       image,
+      mapLayers,
       trackPoints,
       transform,
     });
@@ -832,6 +874,42 @@
 
   function calculateSplits() {
     return splitsEngine.calculateSplits(courseControls, trackPoints);
+  }
+
+  function normalizeMapLayers(layers) {
+    if (!Array.isArray(layers) || !layers.length) {
+      return [{id: "map-1", title: "Карта 1", course_controls: []}];
+    }
+    return layers.map((layer, index) => ({
+      ...layer,
+      id: layer.id || `map-${index + 1}`,
+      title: layer.title || `Карта ${index + 1}`,
+      course_controls: Array.isArray(layer.course_controls) ? layer.course_controls : [],
+    }));
+  }
+
+  function normalizeAllCourseControls() {
+    const controls = [];
+    mapLayers.forEach((layer) => {
+      layer.course_controls.forEach((control) => {
+        controls.push({...control, map_layer_id: control.map_layer_id || layer.id});
+      });
+    });
+    return splitsEngine.normalizeCourseControls(controls, {trainingType});
+  }
+
+  function activeCourseControls() {
+    return courseControls.filter((control) => control.map_layer_id === activeLayerId);
+  }
+
+  function activeLayerTrackPoints() {
+    const splits = calculateSplits().filter((row) => row.toControl?.map_layer_id === activeLayerId);
+    if (!splits.length) {
+      return trackPoints;
+    }
+    const min = Math.max(Math.min(...splits.map((row) => row.fromTrackIndex)) - 1, 0);
+    const max = Math.min(Math.max(...splits.map((row) => row.toTrackIndex)) + 1, trackPoints.length - 1);
+    return trackPoints.slice(min, max + 1);
   }
 
   function courseControlsBetween(previousControl, currentControl) {
@@ -1122,5 +1200,16 @@
 
   function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
+  }
+
+  function stopViewportGestures(node) {
+    if (!node) {
+      return;
+    }
+    ["pointerdown", "pointermove", "pointerup", "pointercancel", "wheel"].forEach((eventName) => {
+      node.addEventListener(eventName, (event) => {
+        event.stopPropagation();
+      });
+    });
   }
 })();
