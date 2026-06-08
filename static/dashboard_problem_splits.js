@@ -43,7 +43,7 @@
 
   function openProblemSplit(item) {
     const training = trainings[item.training_id];
-    if (!training?.map_image_url) {
+    if (!hasTrainingMapImage(training)) {
       return;
     }
     const rows = problemRowsForTraining(item.training_id);
@@ -58,8 +58,9 @@
       rows,
       rowIndex: Math.max(rows.indexOf(row), 0),
       image: imageForTraining(training),
+      mapLayers: mapLayersForTraining(training),
       trackPoints: trackPointsForTraining(training),
-      transform: training.transform || null,
+      transform: transformForTraining(training),
     });
   }
 
@@ -93,6 +94,21 @@
   }
 
   function courseControlsForTraining(training) {
+    const mapLayers = mapLayersForTraining(training);
+    if (mapLayers.length) {
+      const controls = [];
+      mapLayers.forEach((layer) => {
+        (layer.course_controls || []).forEach((control) => {
+          controls.push({...control, map_layer_id: control.map_layer_id || layer.id});
+        });
+      });
+      if (controls.length) {
+        return window.OrienteeringSplits.normalizeCourseControls(
+          controls,
+          {trainingType: training.training_type || ""}
+        );
+      }
+    }
     return window.OrienteeringSplits.normalizeCourseControls(
       training.course_controls || [],
       {trainingType: training.training_type || ""}
@@ -100,7 +116,7 @@
   }
 
   function trackPointsForTraining(training) {
-    const transform = training.transform;
+    const transform = transformForTraining(training);
     return (training.track_points || []).map((point, index) => ({
       ...point,
       pixel: transform ? geoToPixel(point, transform) : {pixel_x: 0, pixel_y: 0},
@@ -112,11 +128,49 @@
     if (imageCache.has(training.training_id)) {
       return imageCache.get(training.training_id);
     }
+    const mapLayer = mapLayersForTraining(training).find((layer) => layer.map_image_url);
+    const imageUrl = training.map_image_url || mapLayer?.map_image_url || "";
+    if (!imageUrl) {
+      return null;
+    }
     const image = new Image();
     image.alt = "";
-    image.src = training.map_image_url;
+    image.src = imageUrl;
     imageCache.set(training.training_id, image);
     return image;
+  }
+
+  function hasTrainingMapImage(training) {
+    return Boolean(training?.map_image_url)
+      || mapLayersForTraining(training).some((layer) => layer.map_image_url);
+  }
+
+  function mapLayersForTraining(training) {
+    if (Array.isArray(training?.map_layers) && training.map_layers.length) {
+      return training.map_layers.map((layer, index) => ({
+        ...layer,
+        id: layer.id || `map-${index + 1}`,
+        title: layer.title || `Карта ${index + 1}`,
+        course_controls: Array.isArray(layer.course_controls) ? layer.course_controls : [],
+        georef_transform: layer.georef_transform || null,
+      }));
+    }
+    if (!training?.map_image_url && !training?.transform) {
+      return [];
+    }
+    return [{
+      id: "map-1",
+      title: "Карта 1",
+      map_image_url: training.map_image_url || "",
+      georef_transform: training.transform || null,
+      course_controls: Array.isArray(training.course_controls) ? training.course_controls : [],
+    }];
+  }
+
+  function transformForTraining(training) {
+    return mapLayersForTraining(training).find((layer) => layer.georef_transform)?.georef_transform
+      || training?.transform
+      || null;
   }
 
   function updateProblemTotal() {

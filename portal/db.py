@@ -910,6 +910,7 @@ async def list_dashboard_race_results(
             trainings.date AS training_date,
             trainings.training_type AS training_type,
             trainings.course_controls AS training_course_controls,
+            trainings.map_layers AS training_map_layers,
             trainings.track_points AS training_track_points,
             maps.image_path AS map_image_path,
             map_georeferences.transform AS georef_transform
@@ -950,6 +951,7 @@ async def list_dashboard_race_results(
         result["training_date"] = row["training_date"]
         result["training_type"] = row["training_type"]
         result["training_course_controls"] = deserialize_json(row["training_course_controls"], [])
+        result["training_map_layers"] = deserialize_json(row["training_map_layers"], [])
         result["training_track_points"] = deserialize_json(row["training_track_points"], [])
         result["map_image_path"] = row["map_image_path"]
         result["georef_transform"] = deserialize_json(row["georef_transform"], None)

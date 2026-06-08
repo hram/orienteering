@@ -428,22 +428,41 @@ def _build_reviewed_splits(sources: list[dict], reviews: list[dict]) -> tuple[li
 
 def _dashboard_training_ready(result: dict) -> bool:
     return bool(
-        result.get("map_image_path")
-        and result.get("georef_transform")
+        _dashboard_training_has_map(result)
         and result.get("training_course_controls")
         and result.get("training_track_points")
     )
 
 
 def _dashboard_training_payload(result: dict) -> dict:
+    map_layers = _dashboard_map_layers_payload(result.get("training_map_layers") or [])
     return {
         "training_id": result["training_id"],
         "training_type": result.get("training_type") or "",
         "map_image_url": _map_image_url(result.get("map_image_path")),
+        "map_layers": map_layers,
         "course_controls": result.get("training_course_controls") or [],
         "track_points": result.get("training_track_points") or [],
         "transform": result.get("georef_transform"),
     }
+
+
+def _dashboard_training_has_map(result: dict) -> bool:
+    if result.get("map_image_path") and result.get("georef_transform"):
+        return True
+    return any(
+        layer.get("image_path") and layer.get("georef_transform")
+        for layer in result.get("training_map_layers") or []
+    )
+
+
+def _dashboard_map_layers_payload(layers: list[dict]) -> list[dict]:
+    result = []
+    for layer in layers:
+        item = dict(layer)
+        item["map_image_url"] = _map_image_url(layer.get("image_path"))
+        result.append(item)
+    return result
 
 
 def _append_course_problem_splits(items: list[dict], result: dict) -> None:
