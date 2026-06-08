@@ -8,11 +8,9 @@
   const trainingId = workspace.dataset.trainingId;
   const raceResultId = workspace.dataset.raceResultId || null;
   const trainingType = workspace.dataset.trainingType || "";
-  const transform = parseJson(workspace.dataset.transform, null);
-  const courseControls = window.OrienteeringSplits.normalizeCourseControls(
-    parseJson(workspace.dataset.courseControls, []),
-    {trainingType}
-  );
+  const mapLayers = normalizeMapLayers(parseJson(workspace.dataset.mapLayers, []));
+  const transform = mapLayers[0]?.georef_transform || parseJson(workspace.dataset.transform, null);
+  const courseControls = normalizeAllCourseControls();
   const trackPoints = parseJson(workspace.dataset.trackPoints, []).map((point, index) => ({
     ...point,
     pixel: transform ? geoToPixel(point) : {pixel_x: 0, pixel_y: 0},
@@ -49,6 +47,7 @@
         rows: pagerRowsForScoreVisits(),
         rowIndex: pagerRowsForScoreVisits().indexOf(row),
         image,
+        mapLayers,
         trackPoints,
         transform,
       });
@@ -63,6 +62,7 @@
       trainingId,
       row,
       image,
+      mapLayers,
     });
   }
 
@@ -81,6 +81,7 @@
         rows: pagerRowsForSplits(),
         rowIndex: pagerRowsForSplits().indexOf(row),
         image,
+        mapLayers,
         trackPoints,
         transform,
       });
@@ -95,7 +96,36 @@
       trainingId,
       row,
       image,
+      mapLayers,
     });
+  }
+
+  function normalizeMapLayers(layers) {
+    if (Array.isArray(layers) && layers.length) {
+      return layers.map((layer, index) => ({
+        ...layer,
+        id: layer.id || `map-${index + 1}`,
+        title: layer.title || `Карта ${index + 1}`,
+        course_controls: Array.isArray(layer.course_controls) ? layer.course_controls : [],
+      }));
+    }
+    return [{
+      id: "map-1",
+      title: "Карта 1",
+      map_image_url: workspace.dataset.mapImageUrl || "",
+      georef_transform: parseJson(workspace.dataset.transform, null),
+      course_controls: parseJson(workspace.dataset.courseControls, []),
+    }];
+  }
+
+  function normalizeAllCourseControls() {
+    const controls = [];
+    mapLayers.forEach((layer) => {
+      layer.course_controls.forEach((control) => {
+        controls.push({...control, map_layer_id: control.map_layer_id || layer.id});
+      });
+    });
+    return window.OrienteeringSplits.normalizeCourseControls(controls, {trainingType});
   }
 
   function geoToPixel(point) {

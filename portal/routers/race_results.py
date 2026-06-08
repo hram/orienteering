@@ -409,6 +409,32 @@ def _filter_participants_for_import(participants: list[dict], self_participant: 
     return filtered or participants
 
 
+def _complete_course_participants(participants: list[dict], controls: list[dict] | None = None) -> list[dict]:
+    expected_split_count = len(controls or [])
+    if expected_split_count <= 0:
+        expected_split_count = max((len(participant.get("splits", [])) for participant in participants), default=0)
+    return [
+        participant
+        for participant in participants
+        if _participant_has_complete_course(participant, expected_split_count)
+    ]
+
+
+def _participant_has_complete_course(participant: dict | None, expected_split_count: int) -> bool:
+    if not participant:
+        return False
+    if expected_split_count <= 0:
+        return _display_result_seconds(participant) is not None
+    splits = participant.get("splits", [])
+    if len(splits) < expected_split_count:
+        return False
+    for split_index in range(expected_split_count):
+        split_time = _split_stage_time(splits[split_index], split_index) or {}
+        if split_time.get("seconds") is None:
+            return False
+    return True
+
+
 def _ensure_participant_laps_from_bib(participants: list[dict]) -> None:
     for participant in participants:
         if str(participant.get("lap") or "").strip():
@@ -561,6 +587,8 @@ def _parse_orgeo_export_groups(data: dict) -> list[dict]:
     grouped_rows: dict[str, list[tuple[int, dict]]] = {}
     group_order: list[str] = []
     for source_index, row in enumerate(rows):
+        if _is_orgeo_empty_reserve_row(row):
+            continue
         group_name = _orgeo_group_name(row)
         if not group_name:
             continue
@@ -570,10 +598,15 @@ def _parse_orgeo_export_groups(data: dict) -> list[dict]:
         grouped_rows[group_name].append((source_index, row))
 
     groups: list[dict] = []
+    is_relay = bool(data.get("is_relay"))
     for group_name in group_order:
         rows = grouped_rows[group_name]
         rows.sort(key=lambda item: _orgeo_participant_sort_key(item[0], item[1]))
         participants = [_parse_orgeo_participant(row_index, row) for row_index, (_, row) in enumerate(rows)]
+        if not is_relay:
+            participants = _filter_orgeo_course_finishers(participants)
+        if not participants:
+            continue
         _apply_orgeo_control_distances(participants)
         _fill_missing_split_ranks(participants)
         controls = participants[0]["_orgeo_controls"] if participants and participants[0].get("_orgeo_controls") else []
@@ -600,6 +633,8 @@ def _parse_orgeo_live_groups(data: dict, group_name: str | None = None) -> list[
     for source_index, row in enumerate(finish):
         if not isinstance(row, dict):
             continue
+        if _is_orgeo_empty_reserve_row(row):
+            continue
         row_group_name = _orgeo_live_group_name(row)
         if not row_group_name:
             continue
@@ -611,10 +646,15 @@ def _parse_orgeo_live_groups(data: dict, group_name: str | None = None) -> list[
         grouped_rows[row_group_name].append((source_index, row))
 
     groups: list[dict] = []
+    is_relay = bool(data.get("is_relay"))
     for current_group_name in group_order:
         rows = grouped_rows[current_group_name]
         rows.sort(key=lambda item: _orgeo_participant_sort_key(item[0], item[1]))
         participants = [_parse_orgeo_live_participant(row_index, row) for row_index, (_, row) in enumerate(rows)]
+        if not is_relay:
+            participants = _filter_orgeo_course_finishers(participants)
+        if not participants:
+            continue
         _apply_orgeo_control_distances(participants)
         _fill_missing_split_ranks(participants)
         controls = participants[0]["_orgeo_controls"] if participants and participants[0].get("_orgeo_controls") else []
@@ -670,6 +710,40 @@ def _orgeo_live_group_name(row: dict) -> str:
         if value:
             return str(value).strip()
     return ""
+
+
+def _is_orgeo_empty_reserve_row(row: dict) -> bool:
+    name = str(row.get("name") or "").strip()
+    result = str(row.get("finish") or row.get("time") or "").strip()
+    splits = str(row.get("spl") or "").strip()
+    if name or result or splits:
+        return False
+    team = str(row.get("team") or row.get("relay_team") or "").strip().casefold()
+    return team == "резерв" or bool(str(row.get("bib") or row.get("number") or row.get("si") or "").strip())
+
+
+def _filter_orgeo_course_finishers(participants: list[dict]) -> list[dict]:
+    expected_split_count = max((len(participant.get("splits", [])) for participant in participants), default=0)
+    finishers = [
+        participant
+        for participant in participants
+        if _is_orgeo_course_finisher(participant, expected_split_count)
+    ]
+    for row_index, participant in enumerate(finishers):
+        participant["row_index"] = row_index
+    return finishers
+
+
+def _is_orgeo_course_finisher(participant: dict, expected_split_count: int) -> bool:
+    if not str(participant.get("name") or "").strip():
+        return False
+    if not str(participant.get("place") or "").strip():
+        return False
+    if _result_seconds(str(participant.get("result") or "")) is None:
+        return False
+    if expected_split_count <= 0:
+        return True
+    return _participant_has_complete_course(participant, expected_split_count)
 
 
 def _orgeo_participant_sort_key(source_index: int, row: dict) -> tuple[int, int]:
@@ -959,21 +1033,24 @@ def _prepare_race_result_view(result: dict) -> None:
     analysis_participants = _filter_participants_for_import(participants, self_participant) if self_participant else participants
     if self_participant and self_participant not in analysis_participants:
         analysis_participants = [*analysis_participants, self_participant]
+    controls = result.get("controls", [])
+    complete_analysis_participants = _complete_course_participants(analysis_participants, controls)
+    complete_row_indexes = {participant.get("row_index") for participant in complete_analysis_participants}
+    self_is_complete = self_participant is not None and self_participant.get("row_index") in complete_row_indexes
     is_lap_scoped = analysis_participants is not participants and len(analysis_participants) != len(participants)
     analysis_row_indexes = {participant.get("row_index") for participant in analysis_participants}
-    leader_split_by_split = _leader_split_seconds_by_split(analysis_participants)
+    leader_split_by_split = _leader_split_seconds_by_split(complete_analysis_participants)
     self_display_result = _display_result_text(self_participant, result.get("kind")) if self_participant else ""
     self_seconds = _display_result_seconds({"display_result": self_display_result, "result": self_participant.get("result") if self_participant else None})
-    hot_gap_indexes, warm_gap_indexes, good_gap_indexes = _classify_gap_indexes(self_participant, leader_split_by_split)
+    hot_gap_indexes, warm_gap_indexes, good_gap_indexes = _classify_gap_indexes(self_participant if self_is_complete else None, leader_split_by_split)
     problem_indexes = hot_gap_indexes | warm_gap_indexes
-    controls = result.get("controls", [])
     result["is_relay_lap_scoped"] = is_lap_scoped
     result["self_lap"] = str(self_participant.get("lap") or "").strip() if self_participant else ""
     result["problem_split_indexes"] = sorted(problem_indexes)
-    result["virtual_leader"] = _virtual_leader_participant(analysis_participants, leader_split_by_split, controls)
+    result["virtual_leader"] = _virtual_leader_participant(complete_analysis_participants, leader_split_by_split, controls)
     result["pace_distribution"] = _pace_distribution_view(result["virtual_leader"], controls)
-    result["self_problem_total_gap"] = _self_problem_total_gap(self_participant, leader_split_by_split, problem_indexes)
-    result["reachability_chart"] = _reachability_chart_view({**result, "participants": analysis_participants}, self_participant)
+    result["self_problem_total_gap"] = _self_problem_total_gap(self_participant if self_is_complete else None, leader_split_by_split, problem_indexes)
+    result["reachability_chart"] = _reachability_chart_view({**result, "participants": complete_analysis_participants}, self_participant if self_is_complete else None)
     if self_participant:
         for split_index, split in enumerate(self_participant.get("splits", [])):
             split_time = _split_stage_time(split, split_index)
@@ -985,11 +1062,17 @@ def _prepare_race_result_view(result: dict) -> None:
 
     for participant in participants:
         participant["is_same_lap_as_self"] = not is_lap_scoped or participant.get("row_index") in analysis_row_indexes
+        participant["is_complete_course"] = participant.get("row_index") in complete_row_indexes
         participant["display_place"] = _display_place_text(participant)
         participant["display_result"] = _display_result_text(participant, result.get("kind"))
         participant["relative_gap_text"] = ""
         participant["relative_gap_tone"] = ""
-        if self_participant and participant.get("row_index") != self_row_index and participant["is_same_lap_as_self"]:
+        if (
+            self_is_complete
+            and participant.get("row_index") != self_row_index
+            and participant["is_same_lap_as_self"]
+            and participant["is_complete_course"]
+        ):
             participant_seconds = _display_result_seconds(participant)
             if participant_seconds is not None and self_seconds is not None:
                 if result.get("kind") == "course" and any(str(item.get("lap") or "").strip() for item in participants):
@@ -1581,4 +1664,14 @@ def _reachability_chart_view(result: dict, self_participant: dict | None) -> dic
 def _training_view_model(training: dict) -> dict:
     payload = dict(training)
     payload["map_image_url"] = media.map_image_url(training.get("map_image_path"))
+    payload["map_layers"] = _map_layers_view_model(training.get("map_layers") or [])
     return payload
+
+
+def _map_layers_view_model(layers: list[dict]) -> list[dict]:
+    result = []
+    for layer in layers:
+        item = dict(layer)
+        item["map_image_url"] = media.map_image_url(layer.get("image_path"))
+        result.append(item)
+    return result

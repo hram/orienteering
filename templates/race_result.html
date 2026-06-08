@@ -19,6 +19,7 @@
         data-training-type="{{ training.training_type or '' }}"
         data-transform='{{ training.georef_transform | tojson }}'
         data-course-controls='{{ training.course_controls | tojson }}'
+        data-map-layers='{{ training.map_layers | tojson }}'
         data-track-points='{{ training.track_points | tojson }}'
         data-map-image-url="{{ training.map_image_url or '' }}"
       {% endif %}

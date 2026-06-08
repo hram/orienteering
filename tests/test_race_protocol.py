@@ -130,6 +130,17 @@ ORGEO_EXPORT_JSON = json.dumps(
                 "spl_comment": "12:00/km|31|16:00/km|32|",
             },
             {
+                "group_name": "ЖС",
+                "bib": "407",
+                "name": "Батова Мария",
+                "team": "ГБУ ДО СШОР им. В. Коренькова",
+                "finish": "01:01:55",
+                "place": "",
+                "diff": "непр.отмет.",
+                "spl": "00:06:39|31|",
+                "spl_comment": "27:15/km|31|",
+            },
+            {
                 "group_name": "ЖВ",
                 "bib": "10",
                 "name": "Иванова Анна",
@@ -188,6 +199,39 @@ ORGEO_LIVE_JSON = json.dumps(
                 "spl_comment": "12:00/km|31|16:00/km|32|",
             },
             {
+                "dist": "ЖС",
+                "number": "407",
+                "name": "Батова Мария",
+                "team": "ГБУ ДО СШОР им. В. Коренькова",
+                "finish": "01:01:55",
+                "place": "",
+                "diff": "непр.отмет.",
+                "spl": "00:06:39|31|",
+                "spl_comment": "27:15/km|31|",
+            },
+            {
+                "dist": "ЖС",
+                "number": "403",
+                "name": "Ревзина Татьяна",
+                "team": "ГБУ ДЮЦ Мос.р-н Спб ЦФКС и З",
+                "finish": "01:06:49",
+                "place": "",
+                "diff": "непр.отмет.",
+                "spl": "",
+                "spl_comment": "",
+            },
+            {
+                "dist": "ЖС",
+                "number": "406",
+                "name": "Симакова Марина",
+                "team": "р-н Центральный, лично",
+                "finish": "",
+                "place": "",
+                "diff": "",
+                "spl": "",
+                "spl_comment": "",
+            },
+            {
                 "dist": "ЖВ",
                 "number": "10",
                 "name": "Иванова Анна",
@@ -198,6 +242,17 @@ ORGEO_LIVE_JSON = json.dumps(
                 "diff": "+00:00",
                 "spl": "00:01:50|31|00:02:30|32|",
                 "spl_comment": "11:00/km|31|14:00/km|32|",
+            },
+            {
+                "dist": "ЖС",
+                "number": "402",
+                "name": "",
+                "team": "РЕЗЕРВ",
+                "finish": "",
+                "place": "",
+                "diff": "",
+                "spl": "",
+                "spl_comment": "",
             },
         ],
     },
@@ -916,6 +971,73 @@ def test_prepare_race_result_view_uses_first_cumulative_as_split_for_virtual_lea
     assert result["participants"][0]["splits"][0]["leader_gap_text"] == "+00:30"
 
 
+def test_prepare_race_result_view_excludes_incomplete_participants_from_comparison() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "self_row_index": 0,
+        "controls": [{}, {}, {}],
+        "participants": [
+            {
+                "row_index": 0,
+                "name": "Я",
+                "result": "00:05:00",
+                "place": "2",
+                "gap": "+00:30",
+                "splits": [
+                    {"label": "1", "split": {"time": "1:40", "seconds": 100}},
+                    {"label": "2", "split": {"time": "1:40", "seconds": 100}},
+                    {"label": "F", "split": {"time": "1:40", "seconds": 100}},
+                ],
+            },
+            {
+                "row_index": 1,
+                "name": "Лидер",
+                "result": "00:04:30",
+                "place": "1",
+                "gap": "",
+                "splits": [
+                    {"label": "1", "split": {"time": "1:30", "seconds": 90}},
+                    {"label": "2", "split": {"time": "1:30", "seconds": 90}},
+                    {"label": "F", "split": {"time": "1:30", "seconds": 90}},
+                ],
+            },
+            {
+                "row_index": 2,
+                "name": "Не прошла",
+                "result": "н/к",
+                "place": "",
+                "gap": "",
+                "splits": [
+                    {"label": "1", "split": {"time": "0:10", "seconds": 10}},
+                ],
+            },
+            {
+                "row_index": 3,
+                "name": "Без сплитов",
+                "result": "снят",
+                "place": "",
+                "gap": "",
+                "splits": [],
+            },
+        ],
+    }
+
+    _prepare_race_result_view(result)
+
+    me = result["participants"][0]
+    incomplete = result["participants"][2]
+    no_splits = result["participants"][3]
+
+    assert incomplete["is_complete_course"] is False
+    assert no_splits["is_complete_course"] is False
+    assert incomplete["relative_gap_text"] == ""
+    assert no_splits["relative_gap_text"] == ""
+    assert result["virtual_leader"]["display_result"] == "04:30"
+    assert [split["split"]["seconds"] for split in result["virtual_leader"]["splits"]] == [90, 90, 90]
+    assert [split["leader_gap_text"] for split in me["splits"]] == ["+00:10", "+00:10", "+00:10"]
+
+
 def test_pace_distribution_uses_virtual_leader_splits() -> None:
     from portal.routers.race_results import _prepare_race_result_view
 
@@ -1046,6 +1168,48 @@ def test_load_orgeo_live_protocol(monkeypatch) -> None:
     assert len(group["participants"]) == 3
     assert group["participants"][2]["name"] == "Храмова Полина"
     assert group["participants"][2]["result"] == "00:54:10"
+    assert all(participant["bib"] != "407" for participant in group["participants"])
+
+
+def test_orgeo_export_preview_keeps_finishers_without_split_data() -> None:
+    from portal.routers import race_results
+
+    groups = race_results._parse_orgeo_export_groups(
+        {
+            "401": {
+                "group_name": "Ж14",
+                "bib": "401",
+                "name": "Новокшенова Мария",
+                "team": "NORD WEST-СДЮШ ОР№2",
+                "finish": "00:36:56",
+                "place": 1,
+                "result_status": "0",
+            },
+            "407": {
+                "group_name": "Ж14",
+                "bib": "407",
+                "name": "Батова Мария",
+                "team": "ГБУ ДО СШОР им. В. Коренькова",
+                "finish": "01:01:55",
+                "place": None,
+                "result_status": "21",
+            },
+            "402": {
+                "group_name": "Ж14",
+                "bib": "402",
+                "name": "",
+                "team": "РЕЗЕРВ",
+                "finish": None,
+                "place": None,
+            },
+        }
+    )
+
+    assert len(groups) == 1
+    group = groups[0]
+    assert group["name"] == "Ж14"
+    assert group["controls"] == []
+    assert [participant["bib"] for participant in group["participants"]] == ["401"]
 
 
 def test_race_protocol_import_flow(monkeypatch) -> None:
@@ -1231,11 +1395,20 @@ def test_orgeo_import_flow(monkeypatch) -> None:
     assert "Кубок Белых Ночей 11 этап" in preview.text
     assert "ЖС" in preview.text
     assert "Храмова Полина" in preview.text
+    assert "Батова Мария" not in preview.text
     assert save.status_code == 303
     assert detail.status_code == 200
     assert "Кубок Белых Ночей 11 этап" in detail.text
     assert "ЖС" in detail.text
     assert "Храмова Полина" in detail.text
+    assert "402" not in detail.text
+    assert "403" not in detail.text
+    assert "406" not in detail.text
+    assert "407" not in detail.text
+    assert "РЕЗЕРВ" not in detail.text
+    assert "Батова Мария" not in detail.text
+    assert "Ревзина Татьяна" not in detail.text
+    assert "Симакова Марина" not in detail.text
     assert "Анализ темпа" in detail.text
 
 

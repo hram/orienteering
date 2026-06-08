@@ -13,6 +13,7 @@
   const closeButton = document.querySelector("#split-view-close");
 
   let active = null;
+  const layerImageCache = new Map();
 
   closeButton?.addEventListener("click", close);
   modal.addEventListener("click", (event) => {
@@ -26,17 +27,24 @@
     }
   });
 
-  function open(options) {
-    if (!options?.row || !options?.image || !svg) {
+  async function open(options) {
+    if (!options?.row || !svg) {
       return;
     }
-    if (!options.image.complete || !options.image.naturalWidth || !options.image.naturalHeight) {
+    if (!hasMapLayerImage(options) && !options?.image) {
+      return;
+    }
+    if (!hasMapLayerImage(options) && (!options.image.complete || !options.image.naturalWidth || !options.image.naturalHeight)) {
       options.image.addEventListener("load", () => open(options), {once: true});
       return;
     }
+    const mapLayers = normalizeMapLayers(options.mapLayers);
+    const mapLayer = splitMapLayer(options.row, mapLayers);
+    const image = await imageForLayer(mapLayer, options.image);
     active = {
       row: options.row,
-      image: options.image,
+      image,
+      mapLayerId: mapLayer?.id || null,
     };
     if (title) {
       title.textContent = `Сплит ${active.row.label}`;
@@ -73,7 +81,7 @@
       return;
     }
     const image = active.image;
-    const coursePoints = [active.row.fromControl, ...active.row.viaControls, active.row.toControl];
+    const coursePoints = splitCoursePoints(active.row);
     const focusPoints = coursePoints.map(controlPixel);
     svg.innerHTML = "";
     svg.setAttribute("viewBox", splitViewBox(focusPoints, image.naturalWidth, image.naturalHeight).join(" "));
@@ -194,6 +202,64 @@
 
   function controlPixel(control) {
     return {pixel_x: control.pixel_x, pixel_y: control.pixel_y};
+  }
+
+  function splitCoursePoints(row) {
+    const points = [row.fromControl, ...(Array.isArray(row.viaControls) ? row.viaControls : []), row.toControl]
+      .filter(Boolean);
+    if (!active?.mapLayerId) {
+      return points;
+    }
+    const layerPoints = points.filter((control) => (control.map_layer_id || active.mapLayerId) === active.mapLayerId);
+    return layerPoints.length ? layerPoints : points;
+  }
+
+  function hasMapLayerImage(options) {
+    return Array.isArray(options?.mapLayers) && options.mapLayers.some((layer) => layer?.map_image_url);
+  }
+
+  function normalizeMapLayers(layers) {
+    if (!Array.isArray(layers)) {
+      return [];
+    }
+    return layers
+      .filter((layer) => layer && typeof layer === "object")
+      .map((layer, index) => ({...layer, id: layer.id || `map-${index + 1}`}));
+  }
+
+  function splitMapLayer(row, mapLayers) {
+    if (!mapLayers.length) {
+      return null;
+    }
+    const preferredLayerId =
+      row?.toControl?.map_layer_id ||
+      row?.viaControls?.find((control) => control?.map_layer_id)?.map_layer_id ||
+      row?.fromControl?.map_layer_id ||
+      null;
+    return mapLayers.find((layer) => layer.id === preferredLayerId)
+      || mapLayers.find((layer) => layer.map_image_url)
+      || mapLayers[0]
+      || null;
+  }
+
+  async function imageForLayer(layer, fallbackImage) {
+    if (layer?.map_image_url) {
+      const cacheKey = `${layer.id || ""}:${layer.map_image_url}`;
+      if (!layerImageCache.has(cacheKey)) {
+        layerImageCache.set(cacheKey, loadImage(layer.map_image_url));
+      }
+      return await layerImageCache.get(cacheKey);
+    }
+    return fallbackImage;
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => reject(new Error("Не удалось подготовить картинку сплита"));
+      nextImage.src = src;
+    });
   }
 
   function stageDistanceMeters(fromControl, viaControls, toControl) {

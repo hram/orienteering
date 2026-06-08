@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from portal.db import connect_db, get_training_player, init_db, normalize_db_path
+from portal.db import connect_db, get_training_player, init_db, normalize_db_path, save_race_result
 from portal.main import app
 from tests.conftest import fetch_user_id
 
@@ -90,6 +92,124 @@ def test_import_map_layers_are_client_side_tabs() -> None:
     assert 'class="map-layer-tabs image-layer-tabs"' in page.text
     assert page.text.index('id="image-viewport"') < page.text.index('class="map-layer-tabs image-layer-tabs"')
     assert f'/trainings/imports/{draft_id}/map?layer=map-2' not in page.text
+
+
+def test_race_result_page_exposes_training_map_layers() -> None:
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/trainings/imports",
+            data={
+                "title": "Race result layers",
+                "date": "2026-06-07",
+                "discipline": "run",
+                "subject_user_id": fetch_user_id("polina"),
+            },
+            follow_redirects=False,
+        )
+        draft_id = create_response.headers["location"].split("/")[3]
+        client.post(
+            f"/api/imports/{draft_id}/map-image",
+            files={"file": ("first.png", b"fake-first-map", "image/png")},
+        )
+        client.post(
+            f"/api/imports/{draft_id}/georef",
+            json={
+                "control_points": [
+                    {"pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"pixel_x": 1000, "pixel_y": 0, "lat": 60.0, "lon": 30.01},
+                    {"pixel_x": 0, "pixel_y": 1000, "lat": 59.99, "lon": 30.0},
+                ]
+            },
+        )
+        client.post(
+            f"/api/imports/{draft_id}/course-controls",
+            json={
+                "controls": [
+                    {"index": 1, "pixel_x": 0, "pixel_y": 0, "lat": 60.0, "lon": 30.0},
+                    {"index": 2, "pixel_x": 100, "pixel_y": 0, "lat": 60.0, "lon": 30.001},
+                ]
+            },
+        )
+        client.post(f"/api/imports/{draft_id}/map-layers")
+        client.post(
+            f"/api/imports/{draft_id}/map-layers/map-2/map-image",
+            files={"file": ("second.png", b"fake-second-map", "image/png")},
+        )
+        client.post(
+            f"/api/imports/{draft_id}/map-layers/map-2/georef",
+            json={
+                "control_points": [
+                    {"pixel_x": 0, "pixel_y": 0, "lat": 60.1, "lon": 30.1},
+                    {"pixel_x": 1000, "pixel_y": 0, "lat": 60.1, "lon": 30.11},
+                    {"pixel_x": 0, "pixel_y": 1000, "lat": 60.09, "lon": 30.1},
+                ]
+            },
+        )
+        client.post(
+            f"/api/imports/{draft_id}/map-layers/map-2/course-controls",
+            json={
+                "controls": [
+                    {"index": 1, "pixel_x": 100, "pixel_y": 100, "lat": 60.1, "lon": 30.1},
+                    {"index": 2, "pixel_x": 200, "pixel_y": 200, "lat": 60.101, "lon": 30.101},
+                ]
+            },
+        )
+        finish = client.post(f"/trainings/imports/{draft_id}/finish", follow_redirects=False)
+        assert finish.status_code == 303
+        trainings = client.get("/trainings")
+        match = re.search(
+            r"Race result layers.*?/trainings/([0-9a-f]+)/race-result/import",
+            trainings.text,
+            re.S,
+        )
+        assert match is not None
+        training_id = match.group(1)
+
+        race_result = asyncio.run(_save_layered_race_result(training_id))
+        page = client.get(f"/race-results/{race_result['race_result_id']}")
+
+    assert page.status_code == 200
+    assert "data-map-layers=" in page.text
+    assert '"id": "map-2"' in page.text
+    assert '"map_layer_id": "map-2"' in page.text
+    assert "race_result.js" in page.text
+
+
+async def _save_layered_race_result(training_id: str) -> dict:
+    conn = await connect_db(normalize_db_path(os.environ["ORIENTEERING_PORTAL_DB_PATH"]))
+    try:
+        return await save_race_result(
+            conn,
+            training_id=training_id,
+            race_date="2026-06-07",
+            source_url="https://example.test/_races/layered/split.htm",
+            event_name="Layered event",
+            event_meta="",
+            group_name="Ж14",
+            group_subtitle=None,
+            controls=[
+                {"label": "1", "code": "31", "distance_meters": None},
+                {"label": "Ф", "code": "240", "distance_meters": None},
+            ],
+            participants=[
+                {
+                    "row_index": 0,
+                    "name": "Храмова Полина",
+                    "bib": "411",
+                    "result": "00:10:00",
+                    "place": "1",
+                    "gap": "",
+                    "splits": [
+                        {"label": "1", "split": {"time": "05:00", "seconds": 300}},
+                        {"label": "Ф", "split": {"time": "05:00", "seconds": 300}},
+                    ],
+                }
+            ],
+            self_row_index=0,
+            kind="course",
+        )
+    finally:
+        await conn.close()
 
 
 def test_old_single_map_training_migrates_to_map_layers(tmp_path: Path) -> None:
