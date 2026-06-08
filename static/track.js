@@ -28,6 +28,7 @@
   let drag = null;
   let splitDrag = null;
   let persistTimer = null;
+  const trackMarkerEngine = window.OrienteeringTrackMarkers;
 
   layerTabs.forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -313,62 +314,10 @@
   }
 
   function calculateLayerSplitMarkers() {
-    const layerControlGroups = mapLayers
-      .map((layer) => ({
-        layer,
-        controls: courseControls.filter((control) => control.map_layer_id === layer.id && control.kind !== "start-point"),
-      }))
-      .filter((group) => group.controls.length);
-    if (layerControlGroups.length <= 1 || !trackPoints.length) {
+    if (!trackMarkerEngine) {
       return [];
     }
-
-    const starts = [];
-    let previousStart = 0;
-    for (const group of layerControlGroups) {
-      const firstControl = group.controls[0];
-      const match = findClosestTrackPoint(firstControl, previousStart, trackPoints.length);
-      if (match === null) {
-        return [];
-      }
-      starts.push(match);
-      previousStart = Math.min(match + 1, trackPoints.length - 1);
-    }
-
-    const splitControls = courseControls.filter((control) => control.kind !== "start-point");
-    const markers = [];
-    for (let groupIndex = 0; groupIndex < layerControlGroups.length; groupIndex += 1) {
-      const group = layerControlGroups[groupIndex];
-      const endIndex = groupIndex + 1 < starts.length ? starts[groupIndex + 1] : trackPoints.length;
-      let searchStart = starts[groupIndex];
-      for (const control of group.controls) {
-        const match = findClosestTrackPoint(control, searchStart, endIndex);
-        if (match === null) {
-          return [];
-        }
-        markers.push({
-          trackIndex: match,
-          control,
-          order: splitControls.indexOf(control),
-        });
-        searchStart = Math.min(match + 1, trackPoints.length - 1);
-      }
-    }
-    return markers.filter((marker) => marker.order >= 0);
-  }
-
-  function findClosestTrackPoint(control, startIndex, endIndex) {
-    let best = null;
-    const start = clamp(Math.floor(startIndex), 0, trackPoints.length - 1);
-    const end = clamp(Math.ceil(endIndex), start + 1, trackPoints.length);
-    for (let index = start; index < end; index += 1) {
-      const point = trackPoints[index];
-      const distanceMeters = haversineMeters(point, control);
-      if (!best || distanceMeters < best.distanceMeters) {
-        best = {index, distanceMeters};
-      }
-    }
-    return best ? best.index : null;
+    return trackMarkerEngine.calculateLayerSplitMarkers(mapLayers, courseControls, trackPoints);
   }
 
   function annotateSplitMarker(trackIndex, control, order) {
@@ -790,22 +739,6 @@
       pixel_x: (x - view.translateX) / view.scale,
       pixel_y: (y - view.translateY) / view.scale,
     };
-  }
-
-  function haversineMeters(a, b) {
-    const radius = 6371000;
-    const lat1 = toRadians(a.lat);
-    const lat2 = toRadians(b.lat);
-    const deltaLat = toRadians(b.lat - a.lat);
-    const deltaLon = toRadians(b.lon - a.lon);
-    const value =
-      Math.sin(deltaLat / 2) ** 2 +
-      Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
-    return radius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
-  }
-
-  function toRadians(value) {
-    return value * Math.PI / 180;
   }
 
   function parseJson(rawValue, fallback) {

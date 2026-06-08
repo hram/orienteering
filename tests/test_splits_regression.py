@@ -136,6 +136,57 @@ console.log(JSON.stringify({
     assert actual == {"count": 1, "toTrackIndex": 2, "splitSeconds": 20}
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is required for JS split tests")
+def test_layer_split_markers_limit_first_layer_start_to_track_beginning() -> None:
+    script = """
+const markers = require("./static/track_split_markers.js");
+const mapLayers = [{id: "map-1"}, {id: "map-2"}];
+const controls = [
+  {index: 1, label: "С", kind: "start", lat: 60.0, lon: 30.0, map_layer_id: "map-1"},
+  {index: 2, label: "1", kind: "control", lat: 60.0, lon: 30.001, map_layer_id: "map-1"},
+  {index: 3, label: "2", kind: "control", lat: 60.0, lon: 30.0018, map_layer_id: "map-1"},
+  {index: 4, label: "3", kind: "control", lat: 60.0, lon: 30.0025, map_layer_id: "map-2"},
+  {index: 5, label: "Ф", kind: "finish", lat: 60.0, lon: 30.003, map_layer_id: "map-2"},
+];
+const track = [
+  {lat: 60.0, lon: 29.9995, seconds: 0},
+  {lat: 60.0, lon: 30.00008, seconds: 60},
+  {lat: 60.0, lon: 30.0005, seconds: 120},
+  {lat: 60.0, lon: 30.00102, seconds: 180},
+  {lat: 60.0, lon: 30.0015, seconds: 240},
+  {lat: 60.0, lon: 30.0018, seconds: 300},
+  {lat: 60.0, lon: 30.001, seconds: 360},
+  {lat: 60.0, lon: 30.0012, seconds: 420},
+  {lat: 60.0, lon: 30.00251, seconds: 480},
+  {lat: 60.0, lon: 30.0027, seconds: 540},
+  {lat: 60.0, lon: 30.00301, seconds: 600},
+];
+const result = markers.calculateLayerSplitMarkers(mapLayers, controls, track);
+console.log(JSON.stringify(result.map((marker) => ({
+  label: marker.control.label,
+  trackIndex: marker.trackIndex,
+  order: marker.order,
+}))));
+"""
+
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT_DIR,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    actual = json.loads(result.stdout)
+
+    assert actual == [
+        {"label": "С", "trackIndex": 1, "order": 0},
+        {"label": "1", "trackIndex": 3, "order": 1},
+        {"label": "2", "trackIndex": 5, "order": 2},
+        {"label": "3", "trackIndex": 8, "order": 3},
+        {"label": "Ф", "trackIndex": 10, "order": 4},
+    ]
+
+
 def calculate_fixture_splits(fixture_name: str) -> tuple[dict, dict]:
     fixture_path = ROOT_DIR / "tests" / "fixtures" / fixture_name
     script = """
