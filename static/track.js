@@ -113,7 +113,7 @@
   svg?.addEventListener("pointerup", finishSplitMarkerDrag);
   svg?.addEventListener("pointercancel", finishSplitMarkerDrag);
 
-  if (trackPoints.length && !hasCompleteSplitMarkers()) {
+  if (trackPoints.length && !hasSplitMarkers()) {
     autoAnnotateSplitMarkers();
     saveDraftTrackPointsNow();
   }
@@ -275,7 +275,7 @@
     if (nextIndex === null || nextIndex === splitDrag.trackIndex) {
       return;
     }
-    moveSplitMarkerAnnotation(splitDrag.trackIndex, nextIndex, splitDrag.controlIndex);
+    moveSplitMarkerAnnotation(splitDrag.trackIndex, nextIndex, splitDrag.controlIndex, splitDrag.order);
     splitDrag.trackIndex = nextIndex;
     drawAll();
   }
@@ -390,20 +390,88 @@
     });
   }
 
-  function moveSplitMarkerAnnotation(fromIndex, toIndex, controlIndex) {
+  function moveSplitMarkerAnnotation(fromIndex, toIndex, controlIndex, order) {
     const source = trackPoints[fromIndex];
     const target = trackPoints[toIndex];
     if (!source || !target) {
       return;
     }
-    target.split_control_index = source.split_control_index || controlIndex;
-    target.split_control_label = source.split_control_label;
-    target.split_control_kind = source.split_control_kind;
-    target.split_control_order = source.split_control_order;
-    delete source.split_control_index;
-    delete source.split_control_label;
-    delete source.split_control_kind;
-    delete source.split_control_order;
+    const sourcePayload = {
+      split_control_index: source.split_control_index || controlIndex,
+      split_control_label: source.split_control_label,
+      split_control_kind: source.split_control_kind,
+      split_control_order: source.split_control_order,
+    };
+    const targetPayload = hasSplitMarkerAnnotation(target)
+      ? {
+          split_control_index: target.split_control_index,
+          split_control_label: target.split_control_label,
+          split_control_kind: target.split_control_kind,
+          split_control_order: target.split_control_order,
+        }
+      : null;
+    const nextFreeIndex = targetPayload ? nearestFreeTrackIndex(toIndex, order) : null;
+    if (targetPayload && nextFreeIndex === null) {
+      return;
+    }
+    if (targetPayload) {
+      applySplitMarkerAnnotation(trackPoints[nextFreeIndex], targetPayload);
+    }
+    applySplitMarkerAnnotation(target, sourcePayload);
+    clearSplitMarkerAnnotation(source);
+  }
+
+  function hasSplitMarkerAnnotation(point) {
+    return Number.isFinite(Number(point?.split_control_order));
+  }
+
+  function applySplitMarkerAnnotation(point, payload) {
+    point.split_control_index = payload.split_control_index;
+    point.split_control_label = payload.split_control_label;
+    point.split_control_kind = payload.split_control_kind;
+    point.split_control_order = payload.split_control_order;
+  }
+
+  function clearSplitMarkerAnnotation(point) {
+    delete point.split_control_index;
+    delete point.split_control_label;
+    delete point.split_control_kind;
+    delete point.split_control_order;
+  }
+
+  function nearestFreeTrackIndex(originIndex, movingOrder) {
+    const limits = splitMarkerLimitsForOrder(movingOrder, {ignoreLayerBoundary: true});
+    let best = null;
+    for (let offset = 1; offset < trackPoints.length; offset += 1) {
+      for (const index of [originIndex + offset, originIndex - offset]) {
+        if (index < limits.min || index > limits.max || index < 0 || index >= trackPoints.length) {
+          continue;
+        }
+        if (hasSplitMarkerAnnotation(trackPoints[index])) {
+          continue;
+        }
+        best = index;
+        break;
+      }
+      if (best !== null) {
+        return best;
+      }
+    }
+    return null;
+  }
+
+  function splitMarkerLimitsForOrder(order, options = {}) {
+    const markers = getSplitMarkers();
+    const current = markers.find((marker) => marker.order === order);
+    const previous = markers.filter((marker) => marker.order < order).at(-1);
+    let next = markers.find((marker) => marker.order > order);
+    if (!options.ignoreLayerBoundary && current && next && current.control.map_layer_id !== next.control.map_layer_id) {
+      next = null;
+    }
+    return {
+      min: previous ? previous.trackIndex + 1 : 0,
+      max: next ? next.trackIndex - 1 : trackPoints.length - 1,
+    };
   }
 
   function getSplitMarkers() {
@@ -436,13 +504,7 @@
   }
 
   function splitMarkerLimits(order) {
-    const markers = getSplitMarkers();
-    const previous = markers.filter((marker) => marker.order < order).at(-1);
-    const next = markers.find((marker) => marker.order > order);
-    return {
-      min: previous ? previous.trackIndex + 1 : 0,
-      max: next ? next.trackIndex - 1 : trackPoints.length - 1,
-    };
+    return splitMarkerLimitsForOrder(order);
   }
 
   function nearestTrackIndexToPixel(pixel, minIndex, maxIndex) {
@@ -532,13 +594,7 @@
   }
 
   function activeLayerTrackPoints() {
-    const markers = getSplitMarkers().filter((marker) => marker.control.map_layer_id === activeLayerId);
-    if (!markers.length) {
-      return trackPoints;
-    }
-    const min = Math.max(Math.min(...markers.map((marker) => marker.trackIndex)) - 1, 0);
-    const max = Math.min(Math.max(...markers.map((marker) => marker.trackIndex)) + 1, trackPoints.length - 1);
-    return trackPoints.slice(min, max + 1);
+    return trackPoints;
   }
 
   function serializedTrackPoint(point) {
