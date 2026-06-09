@@ -1780,6 +1780,83 @@ def test_dashboard_problem_splits_excludes_reviewed_split() -> None:
     assert reviewed_splits[0]["reason_text"] == "Низкий темп без ошибки"
 
 
+def test_dashboard_problem_splits_excludes_reviewed_split_from_map_layer_controls() -> None:
+    from portal.main import _build_problem_splits
+
+    legacy_controls = [
+        {"lat": 60.0, "lon": 30.0 + index * 0.001, "label": f"old-{index}"}
+        for index in range(7)
+    ]
+    layer_controls = [
+        {"lat": 60.0, "lon": 30.0 + index * 0.001}
+        for index in range(7)
+    ]
+    track_points = [
+        {"lat": 60.0, "lon": 30.0 + index * 0.001, "time": f"2026-04-29T10:00:{index:02d}Z"}
+        for index in range(7)
+    ]
+    result = {
+        "training_id": "training-layer-controls",
+        "race_result_id": "race-result-layer-controls",
+        "source_url": "https://example.test/splits.html",
+        "event_name": "Dashboard review",
+        "event_meta": "",
+        "group_name": "Ж14",
+        "group_subtitle": "",
+        "controls": [],
+        "participants": [
+            {
+                "row_index": 0,
+                "result": "00:02:30",
+                "splits": [
+                    {"label": "1", "cumulative": {"seconds": 10}},
+                    {"label": "2", "split": {"seconds": 10}},
+                    {"label": "3", "split": {"seconds": 10}},
+                    {"label": "4", "split": {"seconds": 110}},
+                    {"label": "Ф", "split": {"seconds": 10}},
+                ],
+            },
+            {
+                "row_index": 1,
+                "result": "00:00:50",
+                "splits": [
+                    {"label": "1", "cumulative": {"seconds": 10}},
+                    {"label": "2", "split": {"seconds": 10}},
+                    {"label": "3", "split": {"seconds": 10}},
+                    {"label": "4", "split": {"seconds": 10}},
+                    {"label": "Ф", "split": {"seconds": 10}},
+                ],
+            },
+        ],
+        "self_row_index": 0,
+        "kind": "course",
+        "training_title": "Dashboard layer controls",
+        "training_date": "2026-04-29",
+        "training_type": "race",
+        "training_course_controls": legacy_controls,
+        "training_map_layers": [
+            {
+                "id": "map-1",
+                "image_path": "/tmp/map.png",
+                "georef_transform": {"lon_a": 1, "lon_b": 0, "lon_c": 0, "lat_a": 0, "lat_b": 1, "lat_c": 0},
+                "course_controls": layer_controls,
+            }
+        ],
+        "training_track_points": track_points,
+        "map_image_path": None,
+        "georef_transform": None,
+        "self_participant": None,
+    }
+    result["self_participant"] = result["participants"][0]
+
+    problem_splits, _ = _build_problem_splits([result])
+    reviewed_result = {**result, "reviewed_split_keys": {("4", "3", "4")}}
+    reviewed_problem_splits, _ = _build_problem_splits([reviewed_result])
+
+    assert [split["split_label"] for split in problem_splits] == ["4"]
+    assert reviewed_problem_splits == []
+
+
 def test_dashboard_error_reason_stats_builds_top_and_trend() -> None:
     from portal.main import _build_error_reason_stats
 
@@ -1842,6 +1919,39 @@ def test_dashboard_race_position_stats_builds_place_trend() -> None:
     assert stats["points"][1]["position_ratio"] == 0.175
     assert stats["points"][2]["position_ratio"] == 0.1
     assert [point["date_label"] for point in stats["points"]] == ["03.05", "10.05", "11.05"]
+
+
+def test_dashboard_race_position_stats_uses_max_place_for_sparse_results() -> None:
+    from portal.main import _build_race_position_stats
+
+    participants = [
+        {"place": "1"},
+        {"place": "2"},
+        {"place": "5"},
+        {"place": "6"},
+        {"place": "7"},
+        {"place": "8"},
+        {"place": "9"},
+        {"place": "11", "name": "Храмова Ольга"},
+        {"place": "13"},
+    ]
+
+    stats = _build_race_position_stats(
+        [
+            {
+                "race_date": "2026-06-07",
+                "training_title": "Sparse places",
+                "event_name": "Sparse places",
+                "group_name": "Ж40",
+                "participants": participants,
+                "self_participant": participants[7],
+            }
+        ]
+    )
+
+    assert stats["latest_place"] == 11
+    assert stats["latest_participant_count"] == 13
+    assert stats["points"][0]["position_ratio"] == round(11 / 13, 4)
 
 
 def test_dashboard_race_position_stats_uses_relay_result_rank() -> None:

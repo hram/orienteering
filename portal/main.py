@@ -299,7 +299,7 @@ def _build_race_position_stats(sources: list[dict]) -> dict:
         place = _dashboard_effective_place(result, self_participant)
         if place is None:
             continue
-        participant_count = len(result.get("participants") or [])
+        participant_count = _dashboard_ranked_participant_count(result, place)
         date = str(result.get("race_date") or result.get("training_date") or "")
         if not date:
             continue
@@ -328,6 +328,16 @@ def _build_race_position_stats(sources: list[dict]) -> dict:
         "best_participant_count": best["participant_count"] if best else None,
         "max_place": max((point["place"] for point in points), default=1),
     }
+
+
+def _dashboard_ranked_participant_count(result: dict, place: int) -> int:
+    participants = result.get("participants") or []
+    place_numbers = [
+        parsed
+        for participant in participants
+        if (parsed := _place_to_int(participant.get("place"))) is not None
+    ]
+    return max([len(participants), place, *place_numbers], default=place)
 
 
 def _dashboard_effective_place(result: dict, self_participant: dict) -> int | None:
@@ -595,10 +605,7 @@ def _is_reviewed_problem_split(result: dict, split_index: int) -> bool:
 
 
 def _dashboard_review_key(result: dict, split_index: int) -> tuple[str, str, str] | None:
-    controls = _normalized_dashboard_controls(
-        result.get("training_course_controls") or [],
-        is_rogaine=result.get("training_type") == "rogaine",
-    )
+    controls = _dashboard_course_controls(result)
     split_controls = [control for control in controls if control["kind"] != "start-point"]
     if split_index < 0 or split_index + 1 >= len(split_controls):
         return None
@@ -611,14 +618,28 @@ def _dashboard_review_key(result: dict, split_index: int) -> tuple[str, str, str
     )
 
 
+def _dashboard_course_controls(result: dict) -> list[dict]:
+    map_layers = result.get("training_map_layers") or []
+    layer_controls: list[dict] = []
+    for layer_index, layer in enumerate(map_layers):
+        layer_id = layer.get("id") or f"map-{layer_index + 1}"
+        for control in layer.get("course_controls") or []:
+            layer_controls.append({**control, "map_layer_id": control.get("map_layer_id") or layer_id})
+    controls = layer_controls or (result.get("training_course_controls") or [])
+    return _normalized_dashboard_controls(
+        controls,
+        is_rogaine=result.get("training_type") == "rogaine",
+    )
+
+
 def _normalized_dashboard_controls(controls: list[dict], *, is_rogaine: bool) -> list[dict]:
     total = len(controls)
     return [
         {
             **control,
             "index": index + 1,
-            "label": _dashboard_control_label(index, total, is_rogaine=is_rogaine),
-            "kind": _dashboard_control_kind(index, total, is_rogaine=is_rogaine),
+            "label": control.get("label") or _dashboard_control_label(index, total, is_rogaine=is_rogaine),
+            "kind": control.get("kind") or _dashboard_control_kind(index, total, is_rogaine=is_rogaine),
         }
         for index, control in enumerate(controls)
     ]
