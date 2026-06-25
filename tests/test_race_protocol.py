@@ -80,6 +80,61 @@ PDF_PROTOCOL_TEXT = """Чемпионат и Первенство Санкт-П�
 1 ЛЕКОНЦЕВ АЛЕКСАНДР ДЮНЫ-Сестрорецк, ГорСЮТур 1989 б/р 343 00:25:58 1 00:01:53 (1)00:01:53 (1) 00:02:05 (1)00:03:58 (1) 00:04:54 (1)00:08:52 (1) 00:02:25 (1)00:11:17 (1) 00:02:34 (1)00:13:51 (1) 00:06:25 (1)00:20:16 (1) 00:01:34 (1)00:21:50 (1) 00:01:33 (1)00:23:23 (1) 00:02:22 (1)00:25:45 (1) 00:00:1200:25:58 (1)
 """
 
+SPORTIDENT_GROUP_HTML = """<html><head><title>On-line результаты sportident.online</title></head><body>
+<table class='tb_print' cellspacing='0' cellpadding='3' border='0' bgcolor='white'>
+<tr><td colspan='10' class='name_comp'>ККП-5 день, СПРИНТ<br>20.06.2026<br> <br></td></tr>
+<tr><td colspan='10' class='name_grup'>Ж14*, <font size='4'>2.2км</font>, <font size='4'>10КП</font></td></tr>
+<tr>
+<th class='font_din b_style' width='1%' align='left'>№пп</th>
+<th class='font_din b_style' align='left'>Фамилия,имя</th>
+<th class='font_din b_style' align='left'>Коллектив</th>
+<th class='font_din b_style' width='1%' align='left'>Квал</th>
+<th class='font_din b_style' width='1%' align='left'>Номер</th>
+<th class='font_din b_style' width='1%' align='left'>ГР</th>
+<th class='font_din b_style' width='1%' align='left'>Старт</th>
+<th class='font_din b_style' width='1%' align='left'>чип</th>
+<th class='font_din b_style' width='1%' align='left'>Результат</th>
+<th class='font_din b_style' width='1%' align='left'>Место</th>
+<th class='font_din b_style' width='1%' align='left'>Прим</th>
+<th class='font_din b_style th_ol' width='1%' align='center'>КП54<br>232м<br>0,23км</th>
+<th class='font_din b_style th_ol' width='1%' align='center'>КП133<br>173м<br>0,40км</th>
+<th class='font_din b_style th_ol' width='1%' align='center'>КП100<br>241м<br>1,73км</th>
+</tr>
+<tr class='hoverRow'>
+<td align='right' style='color:#D8D8D8;'>1</td>
+<td class='font_din no_sp'><a href='../ol/split.php?id=283500000161401'>Венина Екатерина</a></td>
+<td class='font_din no_sp'><a href='team.php?id=2835&t=4002'>г.Москва</a></td>
+<td class='font_din no_sp'>I</td>
+<td class='font_din no_sp'>1614</td>
+<td class='font_din no_sp'>2012</td>
+<td class='font_din no_sp'></td>
+<td class='font_din no_sp'></td>
+<td class='font_din no_sp'>0:20:49</td>
+<td align='right' class='font_din no_sp'>1</td>
+<td align='right' class='font_din no_sp'> </td>
+<td align='right' class='b_style no_sp'><font size='2' class='bold font'>04:14(&nbsp;&nbsp;1)</font><br><font size='2' class='bold_green font_green'>04:14(&nbsp;&nbsp;1)</font></td>
+<td align='right' class='b_style no_sp'><font size='2'>01:48(&nbsp;15)</font><br><font size='2'>06:02(&nbsp;&nbsp;1)</font></td>
+<td align='right' class='b_style no_sp'><font size='2'>02:25(&nbsp;10)</font><br><font size='2'>20:48</font></td>
+</tr>
+<tr class='hoverRow'>
+<td align='right' style='color:#D8D8D8;'>2</td>
+<td class='font_din no_sp'><a href='../ol/split.php?id=283500000150101'>Йордан Айна</a></td>
+<td class='font_din no_sp'><a href='team.php?id=2835&t=157'>респ.Карелия</a></td>
+<td class='font_din no_sp'>I</td>
+<td class='font_din no_sp'>1501</td>
+<td class='font_din no_sp'>2012</td>
+<td class='font_din no_sp'></td>
+<td class='font_din no_sp'></td>
+<td class='font_din no_sp'>0:22:13</td>
+<td align='right' class='font_din no_sp'>2</td>
+<td align='right' class='font_din no_sp'> </td>
+<td align='right' class='b_style no_sp'><font size='2'>04:50(&nbsp;10)</font><br><font size='2'>04:50(&nbsp;10)</font></td>
+<td align='right' class='b_style no_sp'><font size='2'>01:36(&nbsp;&nbsp;2)</font><br><font size='2'>06:26(&nbsp;&nbsp;2)</font></td>
+<td align='right' class='b_style no_sp'><font size='2'>03:25(&nbsp;98)</font><br><font size='2'>22:12</font></td>
+</tr>
+</table>
+</body></html>"""
+
 ORGEO_INFO_HTML = """<!doctype html>
 <html><head>
 <meta itemprop="name" content="Кубок Белых Ночей 11 этап">
@@ -379,6 +434,35 @@ def test_detect_protocol_format() -> None:
     assert detect_protocol_format(LEGACY_PROTOCOL) == "legacy_html"
     assert detect_protocol_format(SCORE_PROTOCOL) == "js_score"
     assert detect_protocol_format(PDF_PROTOCOL_TEXT) == "pdf_text"
+    assert detect_protocol_format(SPORTIDENT_GROUP_HTML) == "sportident_online_html"
+
+
+def test_parse_sportident_online_protocol_html() -> None:
+    protocol = parse_race_protocol_html(SPORTIDENT_GROUP_HTML)
+
+    assert protocol.kind == "course"
+    assert protocol.event_name == "ККП-5 день, СПРИНТ"
+    assert protocol.event_meta == "20.06.2026"
+    assert len(protocol.groups) == 1
+
+    group = protocol.groups[0]
+    assert group["name"] == "Ж14*"
+    assert group["subtitle"] == "2.2км, 10КП"
+    assert [control["code"] for control in group["controls"]] == ["54", "133", "100"]
+    assert [control["distance_meters"] for control in group["controls"]] == [232, 173, 241]
+
+    leader = group["participants"][0]
+    assert leader["name"] == "Венина Екатерина"
+    assert leader["team"] == "г.Москва"
+    assert leader["bib"] == "1614"
+    assert leader["result"] == "0:20:49"
+    assert leader["place"] == "1"
+    assert leader["splits"][0]["split"]["seconds"] == 254
+    assert leader["splits"][0]["cumulative"]["seconds"] == 254
+    assert leader["splits"][1]["split"]["seconds"] == 108
+    assert leader["splits"][1]["cumulative"]["seconds"] == 362
+    assert leader["splits"][2]["split"]["seconds"] == 145
+    assert leader["splits"][2]["cumulative"]["seconds"] == 1248
 
 
 def test_parse_score_race_protocol_html() -> None:
@@ -1147,6 +1231,30 @@ def test_prepare_race_result_view_builds_reachability_chart() -> None:
     assert all(point["place"] <= 19 for point in chart["points"])
 
 
+def test_prepare_race_result_view_builds_reachability_chart_from_results_when_gaps_missing() -> None:
+    from portal.routers.race_results import _prepare_race_result_view
+
+    result = {
+        "self_row_index": 2,
+        "participants": [
+            {"row_index": 0, "place": "1", "name": "Лидер", "result": "0:20:49", "gap": "", "splits": []},
+            {"row_index": 1, "place": "2", "name": "Вторая", "result": "0:22:13", "gap": "", "splits": []},
+            {"row_index": 2, "place": "113", "name": "Я", "result": "0:51:16", "gap": "", "splits": []},
+        ],
+    }
+
+    _prepare_race_result_view(result)
+
+    chart = result["reachability_chart"]
+    assert chart["self_name"] == "Я"
+    assert chart["self_place"] == 113
+    assert chart["self_gap_seconds"] == (51 * 60 + 16) - (20 * 60 + 49)
+    assert len(chart["points"]) == 3
+    assert chart["points"][0]["x_seconds"] == chart["self_gap_seconds"]
+    assert chart["points"][1]["x_seconds"] == chart["self_gap_seconds"] - ((22 * 60 + 13) - (20 * 60 + 49))
+    assert chart["points"][2]["is_self"] is True
+
+
 def test_load_orgeo_live_protocol(monkeypatch) -> None:
     from portal.routers import race_results
 
@@ -1458,6 +1566,51 @@ def test_orgeo_relay_import_keeps_full_field_with_lap_filter_toggle(monkeypatch)
     assert "Иванова" in detail.text
     assert "Доронина" in detail.text
     assert detail.text.count('data-other-lap="true" hidden') == 2
+
+
+def test_sportident_group_import_flow(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: SPORTIDENT_GROUP_HTML)
+
+    with TestClient(app) as client:
+        preview = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://sportident.online/ol_new/?id=2835&g=32012"},
+        )
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://sportident.online/ol_new/?id=2835&g=32012",
+                "group_name": "Ж14*",
+                "self_row_index": "0",
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert preview.status_code == 200
+    assert "ККП-5 день, СПРИНТ" in preview.text
+    assert "Ж14*" in preview.text
+    assert "Венина Екатерина" in preview.text
+    assert "Йордан Айна" in preview.text
+    assert save.status_code == 303
+    assert detail.status_code == 200
+    assert "ККП-5 день, СПРИНТ" in detail.text
+    assert "Венина Екатерина" in detail.text
+    assert "КП" in detail.text
+
+
+def test_sportident_event_url_requires_group_hint() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://sportident.online/ol_new/?id=2835"},
+        )
+
+    assert response.status_code == 400
+    assert "Для sportident.online укажи ссылку на конкретную группу со сплитами" in response.text
+    assert "https://sportident.online/ol_new/?id=2835&g=32012" in response.text
 
 
 def test_display_place_falls_back_to_bib() -> None:

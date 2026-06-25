@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.request import Request, urlopen
 
-ProtocolFormat = Literal["js_course", "js_score", "legacy_html", "pdf_text"]
+ProtocolFormat = Literal["js_course", "js_score", "legacy_html", "pdf_text", "sportident_online_html"]
 ProtocolKind = Literal["course", "score"]
 
 
@@ -47,6 +47,8 @@ def detect_protocol_format(content: str) -> ProtocolFormat:
     """
     if _looks_like_pdf_protocol_text(content):
         return "pdf_text"
+    if _looks_like_sportident_online_protocol(content):
+        return "sportident_online_html"
     db_match = re.search(r'const db = "(.*?)";', content, re.S)
     if not db_match:
         return "legacy_html"
@@ -60,6 +62,8 @@ def parse_race_protocol_html(content: str) -> ParsedRaceProtocol:
     fmt = detect_protocol_format(content)
     if fmt == "pdf_text":
         return parse_pdf_race_protocol(content)
+    if fmt == "sportident_online_html":
+        return _parse_sportident_online_protocol_html(content)
     if fmt == "legacy_html":
         return _parse_legacy_race_protocol_html(content)
     if fmt == "js_score":
@@ -80,6 +84,147 @@ def _looks_like_pdf_protocol_text(content: str) -> bool:
         and "Фамилия, имя" in content
         and re.search(r",\s*\d+\s*КП,\s*[\d.,]+\s*км", content) is not None
     )
+
+
+def _looks_like_sportident_online_protocol(content: str) -> bool:
+    return (
+        "sportident.online" in content
+        and "class='name_grup'" in content
+        and "class='hoverRow'" in content
+        and "../ol/split.php?id=" in content
+    )
+
+
+def _parse_sportident_online_protocol_html(content: str) -> ParsedRaceProtocol:
+    event_name, event_meta = _sportident_event_text(content)
+    group_match = re.search(r"<td\b[^>]*class='name_grup'[^>]*>(.*?)</td>", content, re.I | re.S)
+    if group_match is None:
+        raise ValueError("Не найдена группа в протоколе sportident.online")
+
+    group_text = _clean(group_match.group(1))
+    group_name, group_subtitle = _sportident_group_parts(group_text)
+
+    control_headers = re.findall(
+        r"<th\b[^>]*class='[^']*\bth_ol\b[^']*'[^>]*>(.*?)</th>",
+        content,
+        re.I | re.S,
+    )
+    controls = [_parse_sportident_control(header, index) for index, header in enumerate(control_headers)]
+
+    row_matches = re.findall(r"<tr\b[^>]*class='hoverRow'[^>]*>(.*?)</tr>", content, re.I | re.S)
+    participants = []
+    for row_index, row_html in enumerate(row_matches):
+        participant = _parse_sportident_participant(row_index, row_html, controls)
+        if participant is not None:
+            participants.append(participant)
+    _fill_missing_split_ranks(participants)
+
+    return ParsedRaceProtocol(
+        event_name=event_name,
+        event_meta=event_meta,
+        groups=[
+            {
+                "name": group_name,
+                "subtitle": group_subtitle,
+                "controls": controls,
+                "participants": participants,
+            }
+        ],
+        kind="course",
+    )
+
+
+def _sportident_event_text(content: str) -> tuple[str, str]:
+    match = re.search(r"<td\b[^>]*class='name_comp'[^>]*>(.*?)</td>", content, re.I | re.S)
+    if match is None:
+        return "", ""
+    parts = _html_line_parts(match.group(1))
+    event_name = parts[0] if parts else ""
+    event_meta = parts[1] if len(parts) > 1 else ""
+    return event_name, event_meta
+
+
+def _sportident_group_parts(group_text: str) -> tuple[str, str]:
+    parts = [part.strip() for part in group_text.split(",") if part.strip()]
+    if not parts:
+        return "", ""
+    return parts[0], ", ".join(parts[1:])
+
+
+def _parse_sportident_control(header_html: str, column_index: int) -> dict[str, Any]:
+    parts = _html_line_parts(header_html)
+    code = ""
+    distance_meters = None
+    distance_text = ""
+    if parts:
+        code_match = re.search(r"КП\s*([A-Za-z0-9]+)", parts[0], re.I)
+        if code_match:
+            code = code_match.group(1)
+    if len(parts) > 1:
+        distance_match = re.search(r"(\d+)\s*м", parts[1], re.I)
+        if distance_match:
+            distance_meters = int(distance_match.group(1))
+    if len(parts) > 2:
+        distance_text = parts[2]
+    label = str(column_index + 1)
+    if code.upper() == "F":
+        label = "F"
+    return {
+        "column_index": column_index,
+        "label": label,
+        "code": code,
+        "distance_meters": distance_meters,
+        "distance_text": distance_text,
+    }
+
+
+def _parse_sportident_participant(
+    row_index: int,
+    row_html: str,
+    controls: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    cells = re.findall(r"<td\b[^>]*>(.*?)</td>", row_html, re.I | re.S)
+    if len(cells) < 11:
+        return None
+
+    def value(index: int) -> str:
+        return _clean(cells[index]) if index < len(cells) else ""
+
+    splits = [
+        _parse_sportident_split_cell(control, cells[11 + index] if 11 + index < len(cells) else "")
+        for index, control in enumerate(controls)
+    ]
+    bib = value(4)
+    return {
+        "row_index": row_index,
+        "order": _to_int(value(0)),
+        "name": value(1),
+        "bib": bib,
+        "result": value(8),
+        "place": value(9),
+        "gap": value(10),
+        "team": value(2),
+        "lap": _lap_from_bib(bib),
+        "splits": splits,
+        "raw_columns": [value(index) for index in range(len(cells))],
+    }
+
+
+def _parse_sportident_split_cell(control: dict[str, Any], raw_value: str) -> dict[str, Any]:
+    parts = re.split(r"<br\s*/?>", raw_value, flags=re.I)
+    split = _parse_time_rank(parts[0] if parts else "")
+    cumulative = _parse_time_rank(parts[1] if len(parts) > 1 else "")
+    if cumulative is None and split is not None:
+        cumulative = dict(split)
+    if split is None and cumulative is not None:
+        split = dict(cumulative)
+    return {
+        "label": control["label"],
+        "code": control["code"],
+        "distance_meters": control["distance_meters"],
+        "cumulative": cumulative,
+        "split": split,
+    }
 
 
 def _parse_js_course_race_protocol_html(content: str) -> ParsedRaceProtocol:
@@ -647,7 +792,7 @@ def _parse_time_rank(value: str) -> dict[str, Any] | None:
     text = _clean(value)
     if not text:
         return None
-    match = re.match(r"(?P<time>[0-9:]+)\s*(?:\[(?P<code>[^\]]+)\])?\s*(?:\((?P<rank>\d+)\))?$", text)
+    match = re.match(r"(?P<time>[0-9:]+)\s*(?:\[(?P<code>[^\]]+)\])?\s*(?:\(\s*(?P<rank>\d+)\s*\))?$", text)
     if not match:
         return {"raw": text, "seconds": None, "rank": None}
     time_text = match.group("time").strip()
@@ -712,6 +857,10 @@ def _clean(value: str) -> str:
     normalized = re.sub(r"(?i)<br\s*/?>", " ", value)
     normalized = re.sub(r"<[^>]+>", "", normalized)
     return html.unescape(re.sub(r"\s+", " ", normalized)).strip()
+
+
+def _html_line_parts(value: str) -> list[str]:
+    return [_clean(part) for part in re.split(r"(?i)<br\s*/?>", value) if _clean(part)]
 
 
 def _to_int(value: str) -> int | None:

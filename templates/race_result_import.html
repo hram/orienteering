@@ -32,6 +32,7 @@
             URL протокола
             <input name="url" type="url" value="{{ url }}" placeholder="https://orgeo.ru/event/info/52808" required>
           </label>
+          <p class="muted">Для `sportident.online` используй ссылку на конкретную группу со сплитами, например `https://sportident.online/ol_new/?id=2835&g=32012`.</p>
           {% if error %}
             <p class="form-error">{{ error }}</p>
           {% endif %}

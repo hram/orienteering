@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 from statistics import median
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -486,15 +486,35 @@ async def _load_protocol(url: str):
     normalized_url = url.strip()
     if not normalized_url.startswith(("http://", "https://")):
         raise ValueError("URL протокола должен начинаться с http:// или https://")
+    _validate_supported_import_url(normalized_url)
     if _is_orgeo_url(normalized_url):
         return await asyncio.to_thread(_load_orgeo_preview_protocol, normalized_url)
     content = await asyncio.to_thread(fetch_race_protocol, normalized_url)
     return parse_race_protocol_html(content)
 
 
+def _validate_supported_import_url(url: str) -> None:
+    if not _is_sportident_url(url):
+        return
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    if query.get("g"):
+        return
+    example_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?id=2835&g=32012"
+    raise ValueError(
+        "Для sportident.online укажи ссылку на конкретную группу со сплитами "
+        f"(например, {example_url}), а не только на событие."
+    )
+
+
 def _is_orgeo_url(url: str) -> bool:
     parsed = urlparse(url)
     return parsed.netloc.endswith("orgeo.ru")
+
+
+def _is_sportident_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.netloc.endswith("sportident.online") and parsed.path.rstrip("/") == "/ol_new"
 
 
 def _load_orgeo_preview_protocol(url: str) -> ParsedRaceProtocol:
@@ -1603,7 +1623,7 @@ def _gap_seconds(value: str | None) -> int | None:
         return None
     text = value.strip()
     if not text:
-        return 0
+        return None
     sign = 1
     if text.startswith("-"):
         sign = -1
@@ -1627,14 +1647,31 @@ def _reachability_chart_view(result: dict, self_participant: dict | None) -> dic
         return {}
 
     participants = result.get("participants", [])
+    leader_result_seconds = min(
+        (
+            participant_seconds
+            for participant in participants
+            for participant_seconds in [_display_result_seconds(participant)]
+            if participant_seconds is not None
+        ),
+        default=None,
+    )
     self_place_number = _place_number(self_participant.get("place"), self_participant.get("row_index", 0) + 1)
     self_gap_seconds = _gap_seconds(self_participant.get("gap"))
+    if self_gap_seconds is None and leader_result_seconds is not None:
+        self_seconds = _display_result_seconds(self_participant)
+        if self_seconds is not None:
+            self_gap_seconds = self_seconds - leader_result_seconds
     if self_gap_seconds is None:
         self_gap_seconds = 0
 
     points = []
     for participant in participants:
         gap_seconds = _gap_seconds(participant.get("gap"))
+        if gap_seconds is None and leader_result_seconds is not None:
+            participant_seconds = _display_result_seconds(participant)
+            if participant_seconds is not None:
+                gap_seconds = participant_seconds - leader_result_seconds
         if gap_seconds is None:
             continue
         place_number = _place_number(participant.get("place"), participant.get("row_index", 0) + 1)
