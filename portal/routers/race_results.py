@@ -1605,7 +1605,8 @@ def _compact_gap(seconds: int | None) -> str:
 def _result_seconds(value: str | None) -> int | None:
     if not value:
         return None
-    parts = value.strip().split(":")
+    normalized = re.sub(r"[.,]\d+$", "", value.strip())
+    parts = normalized.split(":")
     if not parts or not all(part.isdigit() for part in parts):
         return None
     numbers = [int(part) for part in parts]

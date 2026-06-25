@@ -135,6 +135,58 @@ SPORTIDENT_GROUP_HTML = """<html><head><title>On-line результаты sport
 </table>
 </body></html>"""
 
+SPORTIDENT_INLINE_GROUP_HTML = """<html><head><title>On-line результаты sportident.online</title></head><body>
+<table class='tb_print' cellspacing='0' cellpadding='3' border='0' bgcolor='white'>
+<tr><td colspan='10' class='name_comp'>ККП-4 день, ЛОНГ(Всеросс-Масс-старт)<br>19.06.2026<br> <br></td></tr>
+<tr><td colspan='10' class='name_grup'>Ж14*, <font size='4'>3.5км</font>, <font size='4'>16КП</font></td></tr>
+<tr>
+<th class='font_din b_style' width='1%' align='left'>№пп</th>
+<th class='font_din b_style' align='left'>Фамилия,имя</th>
+<th class='font_din b_style' align='left'>Коллектив</th>
+<th class='font_din b_style' width='1%' align='left'>Квал</th>
+<th class='font_din b_style' width='1%' align='left'>Номер</th>
+<th class='font_din b_style' width='1%' align='left'>ГР</th>
+<th class='font_din b_style' width='1%' align='left'>Старт</th>
+<th class='font_din b_style' width='1%' align='left'>чип</th>
+<th class='font_din b_style' width='1%' align='left'>Результат</th>
+<th class='font_din b_style' width='1%' align='left'>Место</th>
+<th class='font_din b_style' width='1%' align='left'>Прим</th>
+</tr>
+<tr class='hoverRow'>
+<td align='right' style='color:#D8D8D8;'>1</td>
+<td class='font_din no_sp'><a href='../ol/split.php?id=283400000150102'>Йордан Айна</a></td>
+<td class='font_din no_sp'><a href='team.php?id=2834&t=157'>респ.Карелия</a></td>
+<td class='font_din no_sp'>I</td>
+<td class='font_din no_sp'>1501</td>
+<td class='font_din no_sp'>2012</td>
+<td class='font_din no_sp'></td>
+<td class='font_din no_sp'></td>
+<td class='font_din no_sp'>0:27:28,67</td>
+<td align='right' class='font_din no_sp'>1</td>
+<td align='right' class='font_din no_sp'> </td>
+<td align='right' class='b_style no_sp'><font size='2'>03:11(&nbsp71)</font><br><font size='2'>03:11&nbsp;&nbsp;</font></td>
+<td align='right' class='b_style no_sp'><font size='2'>02:53(&nbsp72)</font><br><font size='2'>06:05&nbsp;&nbsp;</font></td>
+<td align='right' class='b_style no_sp'><font size='2'>00:54(fin)</font><br><font size='2'>27:28</font></td>
+</tr>
+<tr class='hoverRow'>
+<td align='right' style='color:#D8D8D8;'>2</td>
+<td class='font_din no_sp'><a href='../ol/split.php?id=283400000158402'>Богопольская Людмила</a></td>
+<td class='font_din no_sp'><a href='team.php?id=2834&t=4002'>г.Москва</a></td>
+<td class='font_din no_sp'>I</td>
+<td class='font_din no_sp'>1584</td>
+<td class='font_din no_sp'>2012</td>
+<td class='font_din no_sp'></td>
+<td class='font_din no_sp'></td>
+<td class='font_din no_sp'>0:28:01,04</td>
+<td align='right' class='font_din no_sp'>2</td>
+<td align='right' class='font_din no_sp'> </td>
+<td align='right' class='b_style no_sp'><font size='2'>03:15(71)</font><br><font size='2'>03:15</font></td>
+<td align='right' class='b_style no_sp'><font size='2'>02:58(72)</font><br><font size='2'>06:13</font></td>
+<td align='right' class='b_style no_sp'><font size='2'>00:50(fin)</font><br><font size='2'>28:01</font></td>
+</tr>
+</table>
+</body></html>"""
+
 ORGEO_INFO_HTML = """<!doctype html>
 <html><head>
 <meta itemprop="name" content="Кубок Белых Ночей 11 этап">
@@ -463,6 +515,31 @@ def test_parse_sportident_online_protocol_html() -> None:
     assert leader["splits"][1]["cumulative"]["seconds"] == 362
     assert leader["splits"][2]["split"]["seconds"] == 145
     assert leader["splits"][2]["cumulative"]["seconds"] == 1248
+
+
+def test_parse_sportident_inline_protocol_html() -> None:
+    protocol = parse_race_protocol_html(SPORTIDENT_INLINE_GROUP_HTML)
+
+    assert protocol.kind == "course"
+    assert protocol.event_name == "ККП-4 день, ЛОНГ(Всеросс-Масс-старт)"
+    assert protocol.event_meta == "19.06.2026"
+    group = protocol.groups[0]
+    assert group["name"] == "Ж14*"
+    assert group["subtitle"] == "3.5км, 16КП"
+    assert [control["code"] for control in group["controls"]] == ["71", "72", "F"]
+    assert [control["label"] for control in group["controls"]] == ["1", "2", "F"]
+
+    leader = group["participants"][0]
+    assert leader["name"] == "Йордан Айна"
+    assert leader["team"] == "респ.Карелия"
+    assert leader["result"] == "0:27:28"
+    assert leader["splits"][0]["code"] == "71"
+    assert leader["splits"][0]["split"]["seconds"] == 191
+    assert leader["splits"][1]["code"] == "72"
+    assert leader["splits"][1]["cumulative"]["seconds"] == 365
+    assert leader["splits"][2]["code"] == "F"
+    assert leader["splits"][2]["split"]["seconds"] == 54
+    assert leader["splits"][2]["cumulative"]["seconds"] == 1648
 
 
 def test_parse_score_race_protocol_html() -> None:
@@ -1599,6 +1676,37 @@ def test_sportident_group_import_flow(monkeypatch) -> None:
     assert "ККП-5 день, СПРИНТ" in detail.text
     assert "Венина Екатерина" in detail.text
     assert "КП" in detail.text
+
+
+def test_sportident_inline_group_import_flow(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", lambda _url: SPORTIDENT_INLINE_GROUP_HTML)
+
+    with TestClient(app) as client:
+        preview = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://sportident.online/ol_new/?id=2834&g=32012"},
+        )
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://sportident.online/ol_new/?id=2834&g=32012",
+                "group_name": "Ж14*",
+                "self_row_index": "1",
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert preview.status_code == 200
+    assert "ККП-4 день, ЛОНГ(Всеросс-Масс-старт)" in preview.text
+    assert "Йордан Айна" in preview.text
+    assert save.status_code == 303
+    assert detail.status_code == 200
+    assert "ККП-4 день, ЛОНГ(Всеросс-Масс-старт)" in detail.text
+    assert "Богопольская Людмила" in detail.text
+    assert "Анализ достижимости" in detail.text
 
 
 def test_sportident_event_url_requires_group_hint() -> None:

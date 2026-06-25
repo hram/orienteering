@@ -109,12 +109,15 @@ def _parse_sportident_online_protocol_html(content: str) -> ParsedRaceProtocol:
         content,
         re.I | re.S,
     )
-    controls = [_parse_sportident_control(header, index) for index, header in enumerate(control_headers)]
-
     row_matches = re.findall(r"<tr\b[^>]*class='hoverRow'[^>]*>(.*?)</tr>", content, re.I | re.S)
+    controls = [_parse_sportident_control(header, index) for index, header in enumerate(control_headers)]
+    inline_mode = not controls
+    if inline_mode:
+        controls = _build_sportident_inline_controls(row_matches)
+
     participants = []
     for row_index, row_html in enumerate(row_matches):
-        participant = _parse_sportident_participant(row_index, row_html, controls)
+        participant = _parse_sportident_participant(row_index, row_html, controls, inline_mode=inline_mode)
         if participant is not None:
             participants.append(participant)
     _fill_missing_split_ranks(participants)
@@ -182,25 +185,34 @@ def _parse_sportident_participant(
     row_index: int,
     row_html: str,
     controls: list[dict[str, Any]],
+    *,
+    inline_mode: bool = False,
 ) -> dict[str, Any] | None:
-    cells = re.findall(r"<td\b[^>]*>(.*?)</td>", row_html, re.I | re.S)
+    cells = _sportident_row_cells(row_html)
     if len(cells) < 11:
         return None
 
     def value(index: int) -> str:
         return _clean(cells[index]) if index < len(cells) else ""
 
-    splits = [
-        _parse_sportident_split_cell(control, cells[11 + index] if 11 + index < len(cells) else "")
-        for index, control in enumerate(controls)
-    ]
+    split_cells = cells[11:]
+    if inline_mode:
+        splits = [
+            _parse_sportident_inline_split_cell(control, split_cells[index] if index < len(split_cells) else "")
+            for index, control in enumerate(controls)
+        ]
+    else:
+        splits = [
+            _parse_sportident_split_cell(control, split_cells[index] if index < len(split_cells) else "")
+            for index, control in enumerate(controls)
+        ]
     bib = value(4)
     return {
         "row_index": row_index,
         "order": _to_int(value(0)),
         "name": value(1),
         "bib": bib,
-        "result": value(8),
+        "result": _normalize_time_text(value(8)),
         "place": value(9),
         "gap": value(10),
         "team": value(2),
@@ -225,6 +237,83 @@ def _parse_sportident_split_cell(control: dict[str, Any], raw_value: str) -> dic
         "cumulative": cumulative,
         "split": split,
     }
+
+
+def _sportident_row_cells(row_html: str) -> list[str]:
+    return re.findall(r"<td\b[^>]*>(.*?)</td>", row_html, re.I | re.S)
+
+
+def _build_sportident_inline_controls(row_matches: list[str]) -> list[dict[str, Any]]:
+    for row_html in row_matches:
+        controls = _sportident_inline_controls_from_row(row_html)
+        if controls:
+            return controls
+    return []
+
+
+def _sportident_inline_controls_from_row(row_html: str) -> list[dict[str, Any]]:
+    cells = _sportident_row_cells(row_html)
+    if len(cells) <= 11:
+        return []
+    controls = []
+    for index, raw_value in enumerate(cells[11:]):
+        parsed = _parse_sportident_inline_code(_sportident_first_line(raw_value))
+        if parsed is None:
+            continue
+        code = parsed["code"]
+        is_finish = code.upper() in {"F", "FIN", "FINISH"}
+        controls.append(
+            {
+                "column_index": index,
+                "label": "F" if is_finish else str(index + 1),
+                "code": "F" if is_finish else code,
+                "distance_meters": None,
+            }
+        )
+    return controls
+
+
+def _parse_sportident_inline_split_cell(control: dict[str, Any], raw_value: str) -> dict[str, Any]:
+    parts = re.split(r"<br\s*/?>", raw_value, flags=re.I)
+    split = _parse_sportident_inline_code(parts[0] if parts else "")
+    cumulative = _parse_time_rank(parts[1] if len(parts) > 1 else "")
+    if cumulative is None and split is not None:
+        cumulative = {
+            "raw": split["raw"],
+            "time": split["time"],
+            "seconds": split["seconds"],
+        }
+    if split is None and cumulative is not None:
+        split = dict(cumulative)
+    return {
+        "label": control["label"],
+        "code": control["code"],
+        "distance_meters": control["distance_meters"],
+        "cumulative": cumulative,
+        "split": split,
+    }
+
+
+def _parse_sportident_inline_code(value: str) -> dict[str, Any] | None:
+    text = _clean(value)
+    if not text:
+        return None
+    match = re.match(r"(?P<time>[0-9:]+(?:[.,]\d+)?)\s*\(\s*(?P<code>[^)]+?)\s*\)\s*$", text)
+    if not match:
+        return None
+    time_text = _normalize_time_text(match.group("time"))
+    code = match.group("code").strip()
+    return {
+        "raw": text,
+        "time": time_text,
+        "seconds": _time_to_seconds(time_text),
+        "code": code,
+    }
+
+
+def _sportident_first_line(value: str) -> str:
+    parts = re.split(r"<br\s*/?>", value, maxsplit=1, flags=re.I)
+    return parts[0] if parts else value
 
 
 def _parse_js_course_race_protocol_html(content: str) -> ParsedRaceProtocol:
@@ -840,7 +929,8 @@ def _normalize_first_score_visit(visits: list[dict[str, Any]]) -> None:
 
 
 def _time_to_seconds(value: str) -> int | None:
-    parts = value.strip().split(":")
+    normalized = _normalize_time_text(value)
+    parts = normalized.strip().split(":")
     if not parts or not all(part.isdigit() for part in parts):
         return None
     numbers = [int(part) for part in parts]
@@ -851,6 +941,13 @@ def _time_to_seconds(value: str) -> int | None:
     if len(numbers) == 1:
         return numbers[0]
     return None
+
+
+def _normalize_time_text(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return re.sub(r"[.,]\d+$", "", text)
 
 
 def _clean(value: str) -> str:
