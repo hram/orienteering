@@ -1597,6 +1597,91 @@ def test_orgeo_import_flow(monkeypatch) -> None:
     assert "Анализ темпа" in detail.text
 
 
+def test_orgeo_multiday_live_url_uses_selected_sub_id(monkeypatch) -> None:
+    from portal.routers import race_results
+
+    export_json = json.dumps(
+        {
+            "event_id": "52808",
+            "sub_id": "2",
+            "has_score": False,
+            "finish": [
+                {
+                    "group_name": "ЖС",
+                    "bib": "155",
+                    "name": "Храмова Полина",
+                    "team": "ДТ Пушкин",
+                    "start": "12:18:00",
+                    "finish": "00:44:10",
+                    "place": 3,
+                    "diff": "+02:02",
+                    "spl": "00:02:20|31|00:03:40|32|",
+                    "spl_comment": "11:10/km|31|14:40/km|32|",
+                }
+            ],
+        }
+    )
+    live_json = json.dumps(
+        {
+            "event_id": "52808",
+            "sub_id": "2",
+            "dist": "ЖС",
+            "is_relay": False,
+            "finish": [
+                {
+                    "dist": "ЖС",
+                    "number": "155",
+                    "name": "Храмова Полина",
+                    "team": "ДТ Пушкин",
+                    "start": "12:18:00",
+                    "finish": "00:44:10",
+                    "result": "00:44:10",
+                    "place": 3,
+                    "diff": "+02:02",
+                    "spl": "00:02:20|31|00:03:40|32|",
+                    "spl_comment": "11:10/km|31|14:40/km|32|",
+                }
+            ],
+        }
+    )
+
+    def fake_fetch(url: str) -> str:
+        if url == "https://orgeo.ru/event/info/52808":
+            return ORGEO_INFO_HTML
+        if url == "https://orgeo.ru/event/export/event_id/52808/sub_id/2/format/json":
+            return export_json
+        if url == "https://orgeo.ru/online/finish/52808?s=2&d=%D0%96%D0%A1&api=json&test_time=&phone=0":
+            return live_json
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(race_results, "fetch_race_protocol", fake_fetch)
+
+    with TestClient(app) as client:
+        preview = client.post(
+            "/race-results/import/preview",
+            data={"url": "https://orgeo.ru/live/#/52808/2"},
+        )
+        options = re.findall(r'<option value="([^"]+)"[^>]*>(.*?)</option>', preview.text, re.S)
+        match = next((value for value, text in options if "Храмова Полина" in text), None)
+        assert match is not None
+        save = client.post(
+            "/race-results/import/save",
+            data={
+                "url": "https://orgeo.ru/live/#/52808/2",
+                "group_name": "ЖС",
+                "self_row_index": match,
+            },
+            follow_redirects=False,
+        )
+        detail = client.get(save.headers["location"])
+
+    assert preview.status_code == 200
+    assert "Храмова Полина" in preview.text
+    assert save.status_code == 303
+    assert detail.status_code == 200
+    assert "44:10" in detail.text
+
+
 def test_orgeo_relay_import_keeps_full_field_with_lap_filter_toggle(monkeypatch) -> None:
     from portal.routers import race_results
 

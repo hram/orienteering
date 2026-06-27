@@ -537,7 +537,7 @@ def _load_orgeo_full_protocol(url: str, group_name: str) -> ParsedRaceProtocol:
     event_id, sub_id = _orgeo_event_context(url)
     info_url = f"https://orgeo.ru/event/info/{event_id}"
     export_url = f"https://orgeo.ru/online/finish/{event_id}?" + urlencode(
-        {"s": "1", "d": group_name, "api": "json", "test_time": "", "phone": "0"}
+        {"s": str(sub_id), "d": group_name, "api": "json", "test_time": "", "phone": "0"}
     )
     info_content = fetch_race_protocol(info_url)
     export_content = fetch_race_protocol(export_url)
