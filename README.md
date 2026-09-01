@@ -162,8 +162,6 @@ Dockerfile                  # multi-stage сборка (Node/Claude CLI + Python
 - [`docs/ai-coach.md`](./docs/ai-coach.md) — как устроен AI-тренер.
 - [`docs/integrations.md`](./docs/integrations.md) — импорт протоколов и внешние источники.
 - [`docs/deployment.md`](./docs/deployment.md) — Docker/Coolify-деплой.
-- [`docs/georeferencing.md`](./docs/georeferencing.md) — дизайн-документ по геопривязке карт (написан до реализации, частично устарел — см. пометки в `docs/architecture.md`).
-- [`docs/ideas.md`](./docs/ideas.md) — бэклог идей владельца; часть уже реализована (см. пометки в `docs/workflows.md`).
 
 ## Лицензия
 
