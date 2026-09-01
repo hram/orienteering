@@ -1,5 +1,7 @@
 # Orienteering Portal
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 Локальный веб-портал для разбора тренировок и стартов по спортивному
 ориентированию: сканы карт с привязкой к координатам, GPS-треки, протоколы
 соревнований и разбор сплитов, вплоть до диалога с персональным AI-тренером
@@ -162,3 +164,7 @@ Dockerfile                  # multi-stage сборка (Node/Claude CLI + Python
 - [`docs/deployment.md`](./docs/deployment.md) — Docker/Coolify-деплой.
 - [`docs/georeferencing.md`](./docs/georeferencing.md) — дизайн-документ по геопривязке карт (написан до реализации, частично устарел — см. пометки в `docs/architecture.md`).
 - [`docs/ideas.md`](./docs/ideas.md) — бэклог идей владельца; часть уже реализована (см. пометки в `docs/workflows.md`).
+
+## Лицензия
+
+[MIT](./LICENSE)
