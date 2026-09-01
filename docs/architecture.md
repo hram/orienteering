@@ -117,7 +117,7 @@ erDiagram
         int image_height
     }
     map_georeferences {
-        text map_id PK_FK
+        text map_id PK, FK
         text method
         text control_points_json
         text transform_json
@@ -181,7 +181,7 @@ erDiagram
         text reviewed_at
     }
     ai_analysis {
-        text training_id PK_FK
+        text training_id PK, FK
         text analysis_json
     }
 ```
